@@ -13,6 +13,7 @@ import 'package:i2p/i2p.dart' show sharedDestinationAddress;
 import '../crypto/hex.dart';
 import '../library/library.dart';
 import '../library/previews.dart';
+import '../library/sidecars.dart';
 import '../library/subtitles.dart';
 import '../nostr/event.dart';
 import '../nostr/filter.dart';
@@ -34,8 +35,11 @@ class CoreService {
   /// Device settings: storage folders shared by all profiles.
   List<String> _baseFolders = [];
   String _defaultFolder = '';
-  final _libraries = <String, Library>{};
-  final _follows = <String, FollowStore>{};
+  // Futures, not values: `map[id] ??= await open()` lets two callers that
+  // arrive together each open their own copy, and the last one assigned
+  // silently drops what was written to the other (docs/performance.md, 3.1).
+  final _libraries = <String, Future<Library>>{};
+  final _follows = <String, Future<FollowStore>>{};
   late final VideoPreviews _previews = VideoPreviews('$_dataDir/previews');
 
   // Subtitles (docs/architecture.md, 9.3): the chosen speech model, whether
@@ -50,12 +54,18 @@ class CoreService {
   final _downloadErrors = <String, String>{};
   final _stopDownloads = <String>{};
   final _subtitleQueue = <String, (String, String)>{};
+
+  /// Files asked for by hand, done even when they already have subtitles.
+  final _redo = <String>{};
+
+  /// Manifests and subtitles beside the files, one cache for all profiles.
+  final _sidecars = Sidecars();
   String? _subtitleSha;
   String _subtitleName = '';
   bool _subtitlesRunning = false;
 
-  Future<FollowStore> _followStore(String profileId) async =>
-      _follows[profileId] ??= await FollowStore.open(File('${_store.profileDir(profileId).path}/follows.json'));
+  Future<FollowStore> _followStore(String profileId) =>
+      _follows[profileId] ??= FollowStore.open(File('${_store.profileDir(profileId).path}/follows.json'));
 
   void _push() => unawaited(_state().then((s) => onPush?.call(s)));
 
@@ -82,7 +92,7 @@ class CoreService {
 
   /// I2P address per profile id, computed from the vault's seeds once.
   final _addresses = <String, String>{};
-  final _stores = <String, FileEventStore>{};
+  final _stores = <String, Future<FileEventStore>>{};
 
   /// Opens the store and, unless [startNetwork] is false, starts the network
   /// in the background. [backend] defaults to I2P under the data folder.
@@ -108,7 +118,7 @@ class CoreService {
     }
     if (startNetwork) manager.start();
     unawaited(s._makePreviews());
-    unawaited(s._queueSubtitles());
+    unawaited(s._writeMissingManifests().then((_) => s._migrateSubtitles()).then((_) => s._queueSubtitles()));
     return s;
   }
 
@@ -129,15 +139,19 @@ class CoreService {
     }
   }
 
-  Future<void> _saveSettings() => _settingsFile.writeAsString(jsonEncode({
-    'baseFolders': _baseFolders,
-    'defaultFolder': _defaultFolder,
-    'whisperModel': _whisperModel,
-    'autoSubtitles': _autoSubtitles,
-  }));
+  Future<void> _saveSettings() => _settingsFile.writeAsString(
+    jsonEncode({
+      'baseFolders': _baseFolders,
+      'defaultFolder': _defaultFolder,
+      'whisperModel': _whisperModel,
+      'autoSubtitles': _autoSubtitles,
+    }),
+  );
 
-  Future<Library> _library(String profileId) async =>
-      _libraries[profileId] ??= await Library.open(File('${_store.profileDir(profileId).path}/collections.json'));
+  Future<Library> _library(String profileId) => _libraries[profileId] ??= Library.open(
+    File('${_store.profileDir(profileId).path}/collections.json'),
+    sidecars: _sidecars,
+  );
 
   String get _activeId => _store.active!.id;
 
@@ -176,10 +190,17 @@ class CoreService {
   Future<Map<String, Object?>> _comments(String target) async {
     final store = await _eventStore(_activeId);
     final events = await store.query([
-      NostrFilter(kinds: const [Kind.comment], tags: {'I': [target]}),
+      NostrFilter(
+        kinds: const [Kind.comment],
+        tags: {
+          'I': [target],
+        },
+      ),
     ]);
     final names = <String, String>{};
-    for (final e in await store.query([NostrFilter(kinds: const [Kind.profile], authors: {for (final e in events) e.pubkey}.toList())])) {
+    for (final e in await store.query([
+      NostrFilter(kinds: const [Kind.profile], authors: {for (final e in events) e.pubkey}.toList()),
+    ])) {
       try {
         names[e.pubkey] = (jsonDecode(e.content) as Map)['name'] as String;
       } catch (_) {}
@@ -214,16 +235,99 @@ class CoreService {
     }
   }
 
-  Map<String, Object?> _fileState(LibraryFile f) => {
-    ...f.toJson(),
-    if (_previews.hasStill(f.sha256)) 'still': _previews.still(f.sha256).path,
-    if (_previews.hasAnimated(f.sha256)) 'animated': _previews.animated(f.sha256).path,
-    if (_subtitles.has(f.sha256)) ...{
-      'subtitles': _subtitles.srt(f.sha256).path,
-      'subtitleLanguage': _subtitles.meta(f.sha256)['language'],
-    },
-    if (_subtitles.failure(f.sha256) case final why?) 'subtitleError': why,
-  };
+  Map<String, Object?> _fileState(Collection c, LibraryFile f) {
+    final subtitles = _sidecars.subtitlesOf('${c.folder}/${f.path}');
+    final first = subtitles.firstOrNull;
+    return {
+      ...f.toJson(),
+      if (_previews.hasStill(f.sha256)) 'still': _previews.still(f.sha256).path,
+      if (_previews.hasAnimated(f.sha256)) 'animated': _previews.animated(f.sha256).path,
+      if (first != null) ...{
+        'subtitles': first.path,
+        'subtitleLanguage': first.language,
+        'subtitleMachine': f.layers.any((l) => l['file'] == first.name && l['origin'] == 'machine'),
+      },
+      if (_subtitles.failure(f.sha256) case final why?) 'subtitleError': why,
+    };
+  }
+
+  bool _hasSubtitles(Collection c, LibraryFile f) => _sidecars.subtitlesOf('${c.folder}/${f.path}').isNotEmpty;
+
+  /// Puts the subtitles made for [sha] beside every copy of that file in the
+  /// active profile's collections, named `<file>.<language>.srt`, records
+  /// them in each manifest, and replaces subtitles made earlier by a model.
+  Future<void> _placeSubtitles(String sha, File made, WhisperModel model, String? language) async {
+    final lib = await _library(_activeId);
+    final layer = {
+      'language': language,
+      'origin': 'machine',
+      'tool': 'whisper.cpp $whisperVersion',
+      'model': model.file,
+      'created': DateTime.now().toUtc().toIso8601String(),
+    };
+    for (final c in lib.collections) {
+      for (final f in c.files.where((f) => f.sha256 == sha)) {
+        final abs = '${c.folder}/${f.path}';
+        final target = _sidecars.subtitlePath(abs, language);
+        final targetName = target.split('/').last;
+        // Written by a person or another tool: leave it and keep ours out.
+        final foreign =
+            File(target).existsSync() && !f.layers.any((l) => l['file'] == targetName && l['origin'] == 'machine');
+        if (foreign) continue;
+        for (final old in f.layers.where((l) => l['type'] == 'subtitles' && l['origin'] == 'machine').toList()) {
+          final oldFile = File('${abs.substring(0, abs.lastIndexOf('/'))}/${old['file']}');
+          if (old['file'] != targetName && await oldFile.exists()) await oldFile.delete();
+          f.layers.remove(old);
+        }
+        await made.copy(target);
+        _sidecars.changed(target);
+        f.layers.add({'type': 'subtitles', 'file': targetName, ...layer});
+        await lib.saveFile(c, f);
+      }
+    }
+  }
+
+  /// Files added before manifests existed get one beside them.
+  Future<void> _writeMissingManifests() async {
+    for (final p in _store.profiles) {
+      final lib = await _library(p.id);
+      for (final c in lib.collections) {
+        for (final f in c.files) {
+          final abs = '${c.folder}/${f.path}';
+          if (!await File(abs).exists() || await File(_sidecars.manifestOf(abs)).exists()) continue;
+          try {
+            await lib.writeManifest(c, f);
+          } on FileSystemException {
+            // A read-only folder keeps working without manifests.
+          }
+        }
+      }
+    }
+  }
+
+  /// Subtitles made before they were kept beside the files
+  /// (`subtitles/<sha256>.srt` in the data folder) move beside them.
+  Future<void> _migrateSubtitles() async {
+    final old = Directory('$_dataDir/subtitles');
+    if (_store.active == null || !await old.exists()) return;
+    final lib = await _library(_activeId);
+    var moved = false;
+    for (final c in lib.collections) {
+      for (final f in c.files) {
+        final srt = File('${old.path}/${f.sha256}.srt');
+        if (!await srt.exists() || _hasSubtitles(c, f)) continue;
+        final meta = File('${old.path}/${f.sha256}.json');
+        final m = await meta.exists() ? jsonDecode(await meta.readAsString()) as Map : const {};
+        final model = modelById(m['model'] as String?) ?? whisperModels.first;
+        await _placeSubtitles(f.sha256, srt, model, m['language'] as String?);
+        moved = true;
+      }
+    }
+    if (moved) _push();
+    await for (final e in old.list()) {
+      if (e is File && (e.path.endsWith('.srt') || e.path.endsWith('.json'))) await e.delete();
+    }
+  }
 
   bool _hasSpeech(LibraryFile f) => f.mime.startsWith('video/') || f.mime.startsWith('audio/');
 
@@ -240,7 +344,7 @@ class CoreService {
     final lib = await _library(_activeId);
     for (final c in lib.collections) {
       for (final f in c.files.where(_hasSpeech)) {
-        if (_subtitles.has(f.sha256) || _subtitles.failed(f.sha256)) continue;
+        if (_hasSubtitles(c, f) || _subtitles.failed(f.sha256)) continue;
         _subtitleQueue.putIfAbsent(f.sha256, () => ('${c.folder}/${f.path}', f.name));
       }
     }
@@ -256,7 +360,8 @@ class CoreService {
         if (model == null) break;
         final sha = _subtitleQueue.keys.first;
         final (path, name) = _subtitleQueue.remove(sha)!;
-        if (_subtitles.has(sha)) continue;
+        final redo = _redo.remove(sha);
+        if (!redo && _sidecars.subtitlesOf(path).isNotEmpty) continue;
         _subtitleSha = sha;
         _subtitleName = name;
         _push();
@@ -275,11 +380,9 @@ class CoreService {
         } else if (r.cancelled) {
           await _subtitles.markFailed(sha, 'Stopped.');
         } else {
-          await _subtitles.saveMeta(sha, {
-            'language': r.language,
-            'model': model.id,
-            'createdAt': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          });
+          final made = _subtitles.srt(sha);
+          await _placeSubtitles(sha, made, model, r.language);
+          await made.delete();
         }
         _subtitleSha = null;
         _push();
@@ -359,12 +462,21 @@ class CoreService {
         NostrFilter(authors: [f.pubkey], kinds: const [Kind.profile, Kind.arcaCollection]),
       ], timeout: const Duration(seconds: 60));
       final mine = await (await _eventStore(profileId)).query([
-        NostrFilter(authors: [_store.profiles.firstWhere((p) => p.id == profileId).pubkey], kinds: const [kindProposal]),
+        NostrFilter(
+          authors: [_store.profiles.firstWhere((p) => p.id == profileId).pubkey],
+          kinds: const [kindProposal],
+        ),
       ]);
       final decisions = mine.isEmpty
           ? const <NostrEvent>[]
           : await node.query(f.address, [
-              NostrFilter(authors: [f.pubkey], kinds: const [Kind.reaction], tags: {'e': [for (final e in mine) e.id]}),
+              NostrFilter(
+                authors: [f.pubkey],
+                kinds: const [Kind.reaction],
+                tags: {
+                  'e': [for (final e in mine) e.id],
+                },
+              ),
             ], timeout: const Duration(seconds: 60));
       if (events.isEmpty && f.fetchedAt == null) {
         f.error = 'No answer yet. Their device may be offline, or their address is still spreading on I2P.';
@@ -401,15 +513,24 @@ class CoreService {
     final me = _store.profiles.firstWhere((p) => p.id == profileId).pubkey;
     final store = await _eventStore(profileId);
     final incoming = await store.query([
-      NostrFilter(kinds: const [kindProposal], tags: {'p': [me]}),
+      NostrFilter(
+        kinds: const [kindProposal],
+        tags: {
+          'p': [me],
+        },
+      ),
     ]);
     if (incoming.isEmpty) return const [];
     final decided = {
-      for (final r in await store.query([NostrFilter(authors: [me], kinds: const [Kind.reaction])]))
+      for (final r in await store.query([
+        NostrFilter(authors: [me], kinds: const [Kind.reaction]),
+      ]))
         ...r.tagValues('e'),
     };
     final names = <String, String>{};
-    for (final e in await store.query([NostrFilter(kinds: const [Kind.profile], authors: {for (final e in incoming) e.pubkey}.toList())])) {
+    for (final e in await store.query([
+      NostrFilter(kinds: const [Kind.profile], authors: {for (final e in incoming) e.pubkey}.toList()),
+    ])) {
       try {
         names[e.pubkey] = (jsonDecode(e.content) as Map)['name'] as String;
       } catch (_) {}
@@ -433,9 +554,7 @@ class CoreService {
     final sent = await (await _eventStore(profileId)).query([
       NostrFilter(authors: [me], kinds: const [kindProposal]),
     ]);
-    final decisions = <String, String>{
-      for (final f in (await _followStore(profileId)).follows) ...f.decisions,
-    };
+    final decisions = <String, String>{for (final f in (await _followStore(profileId)).follows) ...f.decisions};
     return [
       for (final e in sent)
         {
@@ -461,8 +580,8 @@ class CoreService {
     }
   }
 
-  Future<FileEventStore> _eventStore(String id) async =>
-      _stores[id] ??= await FileEventStore.open(File('${_store.profileDir(id).path}/events.jsonl'));
+  Future<FileEventStore> _eventStore(String id) =>
+      _stores[id] ??= FileEventStore.open(File('${_store.profileDir(id).path}/events.jsonl'));
 
   Future<void> _goOnline(ProfileInfo p) async {
     if (net.isWanted(p.id)) return;
@@ -502,7 +621,11 @@ class CoreService {
         NostrFilter(
           authors: [me],
           kinds: [kind],
-          tags: probe.isAddressable ? {'d': [probe.dTag]} : const {},
+          tags: probe.isAddressable
+              ? {
+                  'd': [probe.dTag],
+                }
+              : const {},
           limit: 1,
         ),
       ]);
@@ -536,7 +659,11 @@ class CoreService {
       'commons': {'id': Commons.id, 'name': Commons.name, 'description': Commons.description},
       'collections': [
         for (final c in lib?.collections ?? const <Collection>[])
-          {...c.toJson(), 'files': [for (final f in c.files) _fileState(f)], 'size': c.size},
+          {
+            ...c.toJson(),
+            'files': [for (final f in c.files) _fileState(c, f)],
+            'size': c.size,
+          },
       ],
       'storage': storage,
       'previews': await _previews.available(),
@@ -600,7 +727,7 @@ class CoreService {
           final id = args['id'] as String;
           _forgetKey(id);
           await net.setOffline(id);
-          await _stores.remove(id)?.close();
+          await (await _stores.remove(id))?.close();
           await _store.delete(id);
           _addresses.remove(id);
           await _syncOnline();
@@ -707,26 +834,35 @@ class CoreService {
             if (args['description'] != null) 'description': args['description'],
             if (args['tags'] != null) 'tags': args['tags'],
           };
-          final e = await _publishLocal(_activeId, kindProposal, jsonEncode({
-            'collection': args['collection'],
-            'collectionName': args['collectionName'] ?? '',
-            'path': args['path'],
-            'sha256': args['sha256'],
-            'changes': changes,
-            'note': args['note'] ?? '',
-            // The owner may not have our profile yet; the name travels with
-            // the suggestion (signed by us, so only as trustworthy as we are).
-            'fromName': _store.active!.name,
-          }), [
-            ['p', owner],
-            ['a', '${Kind.arcaCollection}:$owner:${args['collection']}'],
-            ['x', args['sha256'] as String],
-          ]);
+          final e = await _publishLocal(
+            _activeId,
+            kindProposal,
+            jsonEncode({
+              'collection': args['collection'],
+              'collectionName': args['collectionName'] ?? '',
+              'path': args['path'],
+              'sha256': args['sha256'],
+              'changes': changes,
+              'note': args['note'] ?? '',
+              // The owner may not have our profile yet; the name travels with
+              // the suggestion (signed by us, so only as trustworthy as we are).
+              'fromName': _store.active!.name,
+            }),
+            [
+              ['p', owner],
+              ['a', '${Kind.arcaCollection}:$owner:${args['collection']}'],
+              ['x', args['sha256'] as String],
+            ],
+          );
           final node = net.nodeOf(_activeId);
           if (node == null) return {'error': 'Your profile is not online on I2P, so the suggestion could not be sent.'};
           final r = await node.publish(f.address, e, attempts: 2, timeout: const Duration(seconds: 20));
           if (!r.accepted) {
-            return {'error': r.timedOut ? 'The owner did not answer. Try again when they are online.' : 'Refused: ${r.message}'};
+            return {
+              'error': r.timedOut
+                  ? 'The owner did not answer. Try again when they are online.'
+                  : 'Refused: ${r.message}',
+            };
           }
           return {...await _state(), 'sent': e.id};
         case 'decide':
@@ -791,8 +927,7 @@ class CoreService {
           final col = (await _library(_activeId)).byId(args['collection'] as String);
           final f = col.files.firstWhere((f) => f.path == args['path']);
           await _subtitles.clearFailure(f.sha256);
-          final old = _subtitles.srt(f.sha256);
-          if (await old.exists() && _subtitleSha != f.sha256) await old.delete();
+          _redo.add(f.sha256);
           // Asked for by hand: goes ahead of the automatic ones.
           final rest = Map.of(_subtitleQueue)..remove(f.sha256);
           _subtitleQueue
@@ -828,7 +963,7 @@ class CoreService {
     }
     await net.stop();
     for (final s in _stores.values) {
-      await s.close();
+      await (await s).close();
     }
   }
 }
@@ -852,7 +987,10 @@ Future<void> coreIsolateMain(List<Object?> args) async {
       defaultBaseFolder: args.length > 3 ? args[3] as String? : null,
     );
   } catch (e) {
-    toUi.send([0, {'error': 'Could not open Arca data: $e'}]);
+    toUi.send([
+      0,
+      {'error': 'Could not open Arca data: $e'},
+    ]);
     return;
   }
   core.onPush = (state) => toUi.send([-1, state]);

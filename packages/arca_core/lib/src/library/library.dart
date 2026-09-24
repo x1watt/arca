@@ -12,6 +12,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart' as c;
 
 import '../crypto/hex.dart';
+import 'sidecars.dart';
 
 /// The catch-all circle every profile belongs to from the start: open to
 /// everyone, with no admin, where the first collections are made.
@@ -34,7 +35,8 @@ class LibraryFile {
     this.title = '',
     this.description = '',
     this.tags = const [],
-  });
+    List<Map<String, Object?>>? layers,
+  }) : layers = layers ?? [];
 
   /// Path inside the collection folder, with forward slashes.
   final String path;
@@ -47,9 +49,28 @@ class LibraryFile {
   String description;
   List<String> tags;
 
+  /// Text layers kept beside the file (subtitles for now), as recorded in
+  /// its manifest: file name, language, and who or what made them.
+  List<Map<String, Object?>> layers;
+
   String get name => path.split('/').last;
 
-  Map<String, Object> toJson() => {
+  /// The manifest written beside the file (sidecars.dart).
+  Map<String, Object?> manifest() => {
+    'format': manifestFormat,
+    'file': name,
+    'size': size,
+    'sha256': sha256,
+    if (sha1.isNotEmpty) 'sha1': sha1,
+    'mime': mime,
+    'title': title,
+    'description': description,
+    'tags': tags,
+    'added': DateTime.fromMillisecondsSinceEpoch(addedAt * 1000, isUtc: true).toIso8601String(),
+    'layers': layers,
+  };
+
+  Map<String, Object?> toJson() => {
     'path': path,
     'size': size,
     'sha256': sha256,
@@ -59,6 +80,7 @@ class LibraryFile {
     'title': title,
     'description': description,
     'tags': tags,
+    if (layers.isNotEmpty) 'layers': layers,
   };
 
   factory LibraryFile.fromJson(Map<String, dynamic> m) => LibraryFile(
@@ -71,6 +93,7 @@ class LibraryFile {
     title: m['title'] as String? ?? '',
     description: m['description'] as String? ?? '',
     tags: (m['tags'] as List?)?.cast<String>().toList() ?? const [],
+    layers: [for (final l in m['layers'] as List? ?? const []) (l as Map).cast<String, Object?>()],
   );
 }
 
@@ -171,8 +194,7 @@ Future<String> detectMime(File f) async {
   }
   if (starts([0x66, 0x74, 0x79, 0x70], 4)) return 'video/mp4';
   final ext = f.path.contains('.') ? f.path.split('.').last.toLowerCase() : '';
-  return _byExtension[ext] ??
-      (starts([0x50, 0x4B, 0x03, 0x04]) ? 'application/zip' : 'application/octet-stream');
+  return _byExtension[ext] ?? (starts([0x50, 0x4B, 0x03, 0x04]) ? 'application/zip' : 'application/octet-stream');
 }
 
 const _byExtension = {
@@ -204,18 +226,22 @@ const _byExtension = {
 
 /// Collections of one profile, kept in `collections.json` in its folder.
 class Library {
-  Library._(this._file, this._collections);
+  Library._(this._file, this._collections, this.sidecars);
 
   final File _file;
   final List<Collection> _collections;
 
-  static Future<Library> open(File file) async {
+  /// Manifests and subtitles beside the files; shared with the core so the
+  /// folder listings it keeps are the same ones.
+  final Sidecars sidecars;
+
+  static Future<Library> open(File file, {Sidecars? sidecars}) async {
     final list = <Collection>[];
     if (await file.exists()) {
       final m = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       list.addAll([for (final c in m['collections'] as List) Collection.fromJson(c as Map<String, dynamic>)]);
     }
-    return Library._(file, list);
+    return Library._(file, list, sidecars ?? Sidecars());
   }
 
   List<Collection> get collections => List.unmodifiable(_collections);
@@ -250,7 +276,7 @@ class Library {
     if (folder != null) {
       final existing = await dir
           .list(recursive: true, followLinks: false)
-          .where((e) => e is File && !_hidden(e.path, dir.path))
+          .where((e) => e is File && !_hidden(e.path, dir.path) && !_isSidecar(e.path))
           .cast<File>()
           .toList();
       var i = 0;
@@ -261,6 +287,9 @@ class Library {
     }
     _collections.add(col);
     await _save();
+    for (final f in col.files) {
+      await writeManifest(col, f);
+    }
     return col;
   }
 
@@ -277,31 +306,43 @@ class Library {
         final root = Directory(p);
         final top = p.split(Platform.pathSeparator).where((s) => s.isNotEmpty).last;
         await for (final e in root.list(recursive: true, followLinks: false)) {
-          if (e is File && !_hidden(e.path, root.path)) {
+          // Sidecars come along with the file they belong to.
+          if (e is File && !_hidden(e.path, root.path) && !_isSidecar(e.path)) {
             jobs.add((e, '$top/${e.path.substring(root.path.length + 1).replaceAll('\\', '/')}'));
           }
         }
       }
     }
     var added = 0;
+    final fresh = <LibraryFile>[];
     for (final (src, rel) in jobs) {
       final target = File('${col.folder}/${_uniqueRel(col, rel)}');
       if (src.absolute.path != target.absolute.path) {
         await target.parent.create(recursive: true);
         await src.copy(target.path);
+        await _copySidecars(src.absolute.path, target.absolute.path);
       }
-      col.files.add(await _describe(col, target));
+      final f = await _describe(col, target);
+      col.files.add(f);
+      fresh.add(f);
       added++;
       progress?.call(added, jobs.length);
     }
     await _save();
+    for (final f in fresh) {
+      await writeManifest(col, f);
+    }
     return added;
   }
 
+  /// Hashes and types [f]; takes its title, description, tags and layers
+  /// from the manifest beside it when that manifest is about these bytes.
   Future<LibraryFile> _describe(Collection col, File f) async {
     final (sha256, sha1, size) = await hashFile(f);
     final rel = f.absolute.path.substring(col.folder.length + 1).replaceAll('\\', '/');
     final name = rel.split('/').last;
+    final m = sidecars.readManifest(f.absolute.path, sha256: sha256);
+    final subtitleNames = {for (final s in sidecars.subtitlesOf(f.absolute.path)) s.name};
     return LibraryFile(
       path: rel,
       size: size,
@@ -309,8 +350,37 @@ class Library {
       sha1: sha1,
       mime: await detectMime(f),
       addedAt: _now(),
-      title: name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name,
+      title: m?['title'] as String? ?? (name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name),
+      description: m?['description'] as String? ?? '',
+      tags: (m?['tags'] as List?)?.whereType<String>().toList() ?? const [],
+      layers: [
+        for (final l in (m?['layers'] as List?) ?? const [])
+          if (l is Map && subtitleNames.contains(l['file'])) l.cast<String, Object?>(),
+      ],
     );
+  }
+
+  /// Copies the manifest and subtitles beside [src] to sit beside [target],
+  /// renamed to follow it.
+  Future<void> _copySidecars(String src, String target) async {
+    final srcBase = sidecars.baseOf(src);
+    for (final path in sidecars.allOf(src)) {
+      final suffix = path.substring(srcBase.length);
+      await File(path).copy('${sidecars.baseOf(target)}$suffix');
+    }
+    sidecars.changed(target);
+  }
+
+  bool _isSidecar(String path) => sidecars.belongsToSibling(path.replaceAll('\\', '/'));
+
+  /// Rewrites the manifest beside [f] from what the library knows.
+  Future<void> writeManifest(Collection col, LibraryFile f) =>
+      sidecars.writeManifest('${col.folder}/${f.path}', f.manifest());
+
+  /// Saves the library and the file's manifest after [f] changed.
+  Future<void> saveFile(Collection col, LibraryFile f) async {
+    await _save();
+    await writeManifest(col, f);
   }
 
   String _uniqueRel(Collection col, String rel) {
@@ -318,9 +388,7 @@ class Library {
     var n = 2;
     while (col.files.any((f) => f.path == candidate) || File('${col.folder}/$candidate').existsSync()) {
       final dot = rel.lastIndexOf('.');
-      candidate = dot > rel.lastIndexOf('/') + 1
-          ? '${rel.substring(0, dot)} ($n)${rel.substring(dot)}'
-          : '$rel ($n)';
+      candidate = dot > rel.lastIndexOf('/') + 1 ? '${rel.substring(0, dot)} ($n)${rel.substring(dot)}' : '$rel ($n)';
       n++;
     }
     return candidate;
@@ -333,12 +401,16 @@ class Library {
     await _save();
   }
 
-  Future<void> updateFile(String collectionId, String path,
-      {String? title, String? description, List<String>? tags}) async {
-    final f = byId(collectionId).files.firstWhere(
-      (f) => f.path == path,
-      orElse: () => throw LibraryException('No such file in the collection'),
-    );
+  Future<void> updateFile(
+    String collectionId,
+    String path, {
+    String? title,
+    String? description,
+    List<String>? tags,
+  }) async {
+    final f = byId(
+      collectionId,
+    ).files.firstWhere((f) => f.path == path, orElse: () => throw LibraryException('No such file in the collection'));
     if (title != null) f.title = title.trim();
     if (description != null) f.description = description.trim();
     if (tags != null) {
@@ -347,7 +419,7 @@ class Library {
           if (t.trim().isNotEmpty) t.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '-'),
       ].take(32).toList();
     }
-    await _save();
+    await saveFile(byId(collectionId), f);
   }
 
   /// Removes a file from the collection; with [deleteFromDisk] also deletes it.
@@ -355,8 +427,12 @@ class Library {
     final col = byId(collectionId);
     col.files.removeWhere((f) => f.path == path);
     if (deleteFromDisk) {
-      final f = File('${col.folder}/$path');
-      if (await f.exists()) await f.delete();
+      final abs = '${col.folder}/$path';
+      for (final p in [...sidecars.allOf(abs), abs]) {
+        final f = File(p);
+        if (await f.exists()) await f.delete();
+      }
+      sidecars.changed(abs);
     }
     await _save();
   }
@@ -369,9 +445,12 @@ class Library {
 
   Future<void> _save() async {
     final tmp = File('${_file.path}.tmp');
-    await tmp.writeAsString(const JsonEncoder.withIndent(' ').convert({
-      'collections': [for (final c in _collections) c.toJson()],
-    }), flush: true);
+    await tmp.writeAsString(
+      const JsonEncoder.withIndent(' ').convert({
+        'collections': [for (final c in _collections) c.toJson()],
+      }),
+      flush: true,
+    );
     await tmp.rename(_file.path);
   }
 

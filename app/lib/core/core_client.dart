@@ -86,6 +86,7 @@ class FileView {
     this.subtitles,
     this.subtitleLanguage,
     this.subtitleError,
+    this.subtitleMachine = false,
   });
 
   final String collectionId;
@@ -112,6 +113,10 @@ class FileView {
   final String? subtitles;
   final String? subtitleLanguage;
   final String? subtitleError;
+
+  /// Whether those subtitles were made here by speech recognition (as
+  /// opposed to a subtitle file that came with the video).
+  final bool subtitleMachine;
 
   String get name => path.split('/').last;
   String get displayTitle => title.isNotEmpty ? title : name;
@@ -143,6 +148,7 @@ class FileView {
     subtitles: m['subtitles'] as String?,
     subtitleLanguage: m['subtitleLanguage'] as String?,
     subtitleError: m['subtitleError'] as String?,
+    subtitleMachine: m['subtitleMachine'] as bool? ?? false,
   );
 }
 

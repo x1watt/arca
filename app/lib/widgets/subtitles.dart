@@ -121,7 +121,10 @@ class SubtitlePanel extends StatelessWidget {
       return _Transcript(
         path: subtitles,
         language: languageName(file.subtitleLanguage),
-        onRedo: status.hasModel ? () => run(core.makeSubtitles(file)) : null,
+        machine: file.subtitleMachine,
+        onRedo: status.hasModel && file.subtitleMachine
+            ? () => run(core.makeSubtitles(file))
+            : null,
       );
     }
 
@@ -154,10 +157,12 @@ class _Transcript extends StatefulWidget {
   const _Transcript({
     required this.path,
     required this.language,
+    required this.machine,
     required this.onRedo,
   });
   final String path;
   final String language;
+  final bool machine;
   final VoidCallback? onRedo;
 
   @override
@@ -186,7 +191,11 @@ class _TranscriptState extends State<_Transcript> {
             ? 'Transcript'
             : 'Transcript (${widget.language})',
       ),
-      subtitle: const Text('Made on this device by speech recognition'),
+      subtitle: Text(
+        widget.machine
+            ? 'Made on this device by speech recognition'
+            : 'From ${widget.path.split('/').last}',
+      ),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
       children: [
         FutureBuilder(

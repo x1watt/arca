@@ -268,7 +268,7 @@ arca/
   catalogs/            downloaded circle catalogs, shared by all profiles
   media/               Blossom blobs by SHA-256 (own uploads, and media kept for others)
   previews/            video stills and hover GIFs by SHA-256 (9.1)
-  subtitles/           subtitles made on the device, by SHA-256 (9.3)
+  subtitles/           work files of the subtitle maker and notes on files it could not do (9.3)
   models/              downloaded speech models (9.3)
   profiles/
     <profile id>/
@@ -331,7 +331,27 @@ Subtitles are made from the speech in videos and audio with whisper.cpp, built f
 - **Threads.** Decoding and recognition block their thread for minutes, so they run on a worker isolate the core spawns per file; the core reads progress from shared native memory and can stop the job. One file at a time, with half of the processors on a computer and at most four on a phone.
 - **Models.** Not part of the app. The user downloads one from Settings; the app recommends the one that fits the device: Tiny (31 MB) for phones under 6 GB of memory, Base (57 MB) for other phones, Small (181 MB) for computers under 7 GB, and Large turbo (547 MB) for the rest. Models are quantized ggml files, unchanged copies of `ggerganov/whisper.cpp` on Hugging Face, published as assets of the `models-v1` release of `github.com/x1watt/arca`. Downloads continue where they stopped and are checked against the SHA-256 the app carries; a file that does not match is discarded. Stored in `models/`.
 - **Automatic.** With a model chosen and automatic subtitles on (the default), every video and audio file of the active profile's collections is queued when the app opens and when files are added. The user can make them again for a file (for example after switching to a better model) or stop the running job. A file that cannot be done (no sound, unreadable) is marked and skipped until asked for by hand.
-- **Storage.** `subtitles/<sha256>.srt` with the detected language beside it, shared by every collection holding the file. Publishing subtitles as file metadata for others comes with sharing over I2P.
+- **Layout.** Whisper's word timings (DTW alignment heads, so words land where they are spoken) are grouped into cues the way subtitles are written: at most two lines of about 42 characters, balanced and broken after punctuation where possible, a new cue at the end of a sentence or at a pause, no cue longer than seven seconds or shorter than one.
+- **Format.** SubRip (`.srt`), which every player, editor and platform reads.
+- **Storage.** Beside the file, as `<name>.<language>.srt` (9.4), in every collection holding the same bytes, and recorded in the file's manifest as a machine-made layer with the tool and model that made it. Subtitles that came with the file (made by a person or another program) are never overwritten; a file that already has any is skipped by the automatic pass. Making them again replaces only the machine-made ones.
+- **Display.** In the player, like film and television subtitles: white semi-bold text with a thin black outline and a soft shadow, no box, near the bottom, at about 5% of the picture height at any player size.
+
+### 9.4 Files beside each file
+
+A collection is an ordinary folder, and everything Arca knows about a file is written next to it, named after it, so the folder can be copied, backed up or opened by other programs without losing anything:
+
+```
+Talk.webm              the file
+Talk.arca.json         its manifest
+Talk.en.srt            subtitles, one file per language
+```
+
+- **Names.** The file's name without its extension, then the sidecar's own suffix, which is what video players expect for subtitles (mpv, VLC, Kodi and Jellyfin load `Talk.en.srt` for `Talk.webm` by themselves). When two files in a folder differ only by extension (`Song.mp3`, `Song.flac`) each keeps its full name instead: `Song.mp3.arca.json`.
+- **Manifest.** `<name>.arca.json`, readable JSON: format version (`arca-manifest/1`), file name, size, SHA-256, SHA-1, detected type, title, description, tags, date added, and the text layers beside it (file, language, origin, and for machine-made ones the tool, model and date). It is the local form of the manifest in the whitepaper; signing it and publishing it to the circle come with sharing.
+- **Written** whenever the library changes a file: when it is added, edited, when a suggestion is accepted, and when subtitles are made. Through a temporary file and a rename, so a copy taken at any moment never holds half of one.
+- **Read** when a folder becomes a collection or a file is added: a manifest that matches the file's SHA-256 gives back its title, description, tags and layers, so a collection copied elsewhere and adopted again comes back as it was. A manifest for other bytes is ignored.
+- **Carried along.** Adding a file copies its manifest and subtitles with it, renamed with it when the name changes. Removing a file from disk removes its sidecars. Scanning a folder does not list sidecars as files of their own; a `.srt` with no file of the same name beside it is an ordinary file.
+- `collections.json` in the profile stays the fast index of the library; the files beside the files are what travels.
 
 The model download is the one connection that does not go over I2P: a plain HTTPS download from GitHub, started by the user, carrying no profile key or address. It reveals to GitHub that this IP downloaded a speech model, nothing about the profile.
 

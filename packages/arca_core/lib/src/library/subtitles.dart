@@ -3,10 +3,9 @@
 // app: the user downloads one, sized for the device, from Arca's releases.
 // The audio track is decoded to 16 kHz WAV through libmpv, which the app
 // already carries for playback, so this works where there is no ffmpeg
-// (Android). Subtitles are stored by the file's SHA-256 like previews.
+// (Android). Subtitles are written beside the file they belong to.
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -17,6 +16,10 @@ import 'package:ffi/ffi.dart';
 /// Where the models are downloaded from: release assets of Arca's
 /// repository, copied there unchanged from ggerganov/whisper.cpp on
 /// Hugging Face. Each download is checked against [WhisperModel.sha256].
+/// The whisper.cpp release built into libarca_whisper (third_party submodule),
+/// recorded in each subtitle's manifest entry.
+const whisperVersion = '1.9.4';
+
 const modelReleaseUrl = 'https://github.com/x1watt/arca/releases/download/models-v1';
 
 class WhisperModel {
@@ -191,31 +194,22 @@ class _Digest implements Sink<c.Digest> {
   void close() {}
 }
 
-/// Subtitles made for each file, by SHA-256: `<sha>.srt` and `<sha>.json`
-/// (language, model, time), or `<sha>.failed` when a file cannot be done.
+/// Work files of the subtitle maker in the data folder: the result of the
+/// running job (`<sha>.srt`, moved beside the file when done) and a
+/// `<sha>.failed` note for files that cannot be done, so the automatic pass
+/// skips them. The subtitles themselves live beside the files (sidecars.dart).
 class SubtitleStore {
   SubtitleStore(this.dir);
   final String dir;
 
+  /// Where the worker writes the finished subtitles.
   File srt(String sha256) => File('$dir/$sha256.srt');
-  File _meta(String sha256) => File('$dir/$sha256.json');
   File _failed(String sha256) => File('$dir/$sha256.failed');
 
-  // The state sent to the UI asks for these for every file on every
-  // update, so they are read from disk once and then kept in memory.
-  final _metaCache = <String, Map<String, Object?>>{};
+  // Asked for every file on every state update, so kept in memory.
   final _failureCache = <String, String?>{};
 
-  bool has(String sha256) => srt(sha256).existsSync();
   bool failed(String sha256) => failure(sha256) != null;
-
-  Map<String, Object?> meta(String sha256) => _metaCache[sha256] ??= () {
-    try {
-      return (jsonDecode(_meta(sha256).readAsStringSync()) as Map).cast<String, Object?>();
-    } catch (_) {
-      return const <String, Object?>{};
-    }
-  }();
 
   String? failure(String sha256) => _failureCache.putIfAbsent(sha256, () {
     final f = _failed(sha256);
@@ -231,11 +225,6 @@ class SubtitleStore {
   Future<void> clearFailure(String sha256) async {
     if (await _failed(sha256).exists()) await _failed(sha256).delete();
     _failureCache[sha256] = null;
-  }
-
-  Future<void> saveMeta(String sha256, Map<String, Object?> m) async {
-    await _meta(sha256).writeAsString(jsonEncode(m));
-    _metaCache[sha256] = m;
   }
 }
 

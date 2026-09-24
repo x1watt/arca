@@ -8,6 +8,29 @@ import '../core/core_client.dart';
 import '../models/kinds.dart';
 import 'cards.dart';
 
+/// Subtitles the way films and TV show them: white semi-bold text with a
+/// thin black outline and a soft shadow, no box behind it, centered near the
+/// bottom. media_kit scales the text with the player (1.0 at 1920x1080,
+/// 16:9), so 52 comes out at about 5% of the picture height at any size,
+/// fullscreen included.
+const subtitleLook = SubtitleViewConfiguration(
+  style: TextStyle(
+    fontSize: 52,
+    height: 1.25,
+    fontWeight: FontWeight.w600,
+    color: Colors.white,
+    shadows: [
+      // Four hard offsets make the outline, the blurred one the shadow.
+      Shadow(offset: Offset(-1.5, -1.5)),
+      Shadow(offset: Offset(1.5, -1.5)),
+      Shadow(offset: Offset(-1.5, 1.5)),
+      Shadow(offset: Offset(1.5, 1.5)),
+      Shadow(offset: Offset(0, 2), blurRadius: 6, color: Color(0xCC000000)),
+    ],
+  ),
+  padding: EdgeInsets.fromLTRB(48, 0, 48, 36),
+);
+
 /// Plays a video or audio file in place. Uses libmpv through media_kit:
 /// bundled on Android, and the system's libmpv on Linux (package libmpv2).
 /// Shows the preview with a play button until the user starts it, so no
@@ -75,7 +98,11 @@ class _MediaPlayerState extends State<MediaPlayer> {
         aspectRatio: isAudio ? 16 / 5 : 16 / 9,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Video(controller: controller, controls: AdaptiveVideoControls),
+          child: Video(
+            controller: controller,
+            controls: AdaptiveVideoControls,
+            subtitleViewConfiguration: subtitleLook,
+          ),
         ),
       );
     }
