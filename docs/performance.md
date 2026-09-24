@@ -107,6 +107,27 @@ Fix: a patched copy of media_kit_video (`third_party/media_kit_video/ARCA.md`) s
 
 > **Rule: read a native plugin's own log once on every platform.** The fallback printed one line and the app kept working, just slowly. `ARCA_MPV_LOG=1` prints mpv's log.
 
+### 3.11 Zero-copy decoding, measured
+
+After 3.10 the question was whether decoded frames still made a trip through memory. `native/tools/zero_copy_check.cc` answers it on the desktop without a window: it opens the GPU as an EGL device, creates a GLES context in Flutter's place and a second one for mpv exactly as the patched plugin does, renders a video into a texture shared through an EGLImage, reads the picture back in the "Flutter" context, and reports the decoder mpv chose, frames per second and CPU. Build and run:
+
+```sh
+g++ -O2 -std=c++17 -o zero_copy_check native/tools/zero_copy_check.cc $(pkg-config --cflags --libs epoxy mpv)
+./zero_copy_check video.webm gles 15          # or: gl, and a fourth argument for --hwdec
+```
+
+On the RTX 3080 (driver 595), a 4K AV1 video at 30 fps, 15 s, picture checked every time:
+
+- CPU decoding: 239% of one core.
+- GPU decoding copied back through memory (`nvdec-copy`): 15%.
+- GPU decoding handed straight to OpenGL (`nvdec`): 4 to 5%, with a GLES 3 context and with a desktop OpenGL context alike.
+
+So the plugin's GLES 3 context already gets zero-copy decoding on NVIDIA; no desktop OpenGL context is needed. The "CUDA hwdec only works with OpenGL" message seen on Xvfb comes from Mesa's software GL there, not from the setup. The app now prints one line per video with the decoder in use (`video 3840x2160, decoding: nvdec`).
+
+On Android the obvious zero-copy option measured worse. On the C61, a 1080p H.264 video in a release build, 20 s of playback, two runs each: media_kit's default (MediaCodec copying into mpv's GPU output, `mediacodec-copy`) 23 to 25% of one core; `vo=mediacodec_embed` with `hwdec=mediacodec` (MediaCodec drawing straight onto the surface) 37 to 39%. The default stays.
+
+> **Rule: measure the "obviously faster" option before shipping it.** Zero-copy won by a factor of three on the desktop and lost on the phone.
+
 ---
 
 ## 4. The heavy jobs and how they are run
@@ -141,8 +162,9 @@ The one exception is whisper itself, which needs the whole decoded audio in memo
    adb shell "PID=\$(pidof org.arca.arca); for t in /proc/\$PID/task/*; do echo \$(cat \$t/comm) \$(awk '{print \$14+\$15}' \$t/stat); done"
    ```
    Take two readings some seconds apart in one device-side command; ticks are 100 per second.
-5. **Never drive the visible desktop for tests.** GUI checks run on Xvfb (`:98`, `:99`) with their own `HOME` and `XDG_DATA_HOME`, then are stopped by PID after checking the process's `DISPLAY`. The user's desktop session is never used for automated input.
-6. **Phone tests stay inside Arca.** The test phone may be someone's own phone: launch Arca with `am start -n org.arca.arca/.MainActivity`, delete anything pushed for a test afterwards, and do not screenshot outside the app.
+5. **Release builds for CPU numbers.** On the phone the same playback measured 130 to 150% of a core in a debug build and 23 to 39% in a release build; debug numbers compare nothing.
+6. **Never drive the visible desktop for tests.** GUI checks run on Xvfb (`:98`, `:99`) with their own `HOME` and `XDG_DATA_HOME`, then are stopped by PID after checking the process's `DISPLAY`. The user's desktop session is never used for automated input.
+7. **Phone tests stay inside Arca.** The test phone may be someone's own phone: launch Arca with `am start -n org.arca.arca/.MainActivity`, delete anything pushed for a test afterwards, and do not screenshot outside the app.
 
 ---
 

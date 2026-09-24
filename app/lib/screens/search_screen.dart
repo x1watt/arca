@@ -96,26 +96,29 @@ class _SearchScreenState extends State<SearchScreen> {
               onAdvanced: _openAdvanced,
             ),
             actions: [
-              Tooltip(
-                message: 'Your library; other people\'s catalogs join when you follow circles',
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8, right: 16),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.storage_outlined,
-                        size: 18,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Searching ${formatBytes(s.librarySize)}',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ],
+              // On a phone the search field needs the width; the label
+              // only shows where there is room for both.
+              if (MediaQuery.sizeOf(context).width >= 700)
+                Tooltip(
+                  message: 'Your library; other people\'s catalogs join when you follow circles',
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 8, right: 16),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.storage_outlined,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Searching ${formatBytes(s.librarySize)}',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
               const ProfileButton(),
             ],
           ),

@@ -74,6 +74,9 @@ class _MediaPlayerState extends State<MediaPlayer> {
           (l) => stderr.writeln('mpv ${l.prefix}: ${l.text}'),
         );
       }
+      // media_kit's defaults: on Android, MediaCodec with a copy into mpv's
+      // GPU output measured cheaper than MediaCodec drawing straight onto
+      // the surface (docs/performance.md, 3.11).
       final controller = VideoController(player);
       // Put the video surface on screen before opening the file: on Linux
       // its GPU setup runs on the first frame Flutter draws of it, and mpv
@@ -112,6 +115,16 @@ class _MediaPlayerState extends State<MediaPlayer> {
           .timeout(const Duration(seconds: 10), onTimeout: () => Duration.zero);
       if (!mounted) return;
       _fileLoaded = true;
+      // One line per video, to tell GPU decoding (nvdec, vaapi, mediacodec)
+      // from CPU decoding ("no") in the app's output.
+      if (player.platform case final NativePlayer native) {
+        final decoder = await native.getProperty('hwdec-current');
+        final w = await native.getProperty('width');
+        final h = await native.getProperty('height');
+        debugPrint(
+          'video ${w}x$h, decoding: ${decoder.isEmpty ? 'no' : decoder}',
+        );
+      }
       await _loadSubtitles();
     } catch (e) {
       if (!mounted) return;
