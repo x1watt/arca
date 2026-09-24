@@ -96,7 +96,7 @@ class _FileThumbnailState extends State<FileThumbnail> {
                   gaplessPlayback: true,
                   errorBuilder: (_, _, _) => const SizedBox.shrink(),
                 ),
-              if (kind == FileKind.video && !showAnimated)
+              if (kind == FileKind.video && !showAnimated && widget.badge)
                 const Positioned(
                   left: 8,
                   bottom: 8,
@@ -271,11 +271,9 @@ class CollectionCard extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
     );
     final c = collection;
-    final cover =
-        c.files
-            .where((f) => kindForMime(f.mime) == FileKind.image)
-            .firstOrNull ??
-        c.files.firstOrNull;
+    // Only the picture the owner chose; otherwise a folder, so nobody
+    // mistakes the collection for one of its files.
+    final cover = c.coverFile;
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: () => openCollection(context, c.id),
@@ -285,7 +283,7 @@ class CollectionCard extends StatelessWidget {
           Stack(
             children: [
               if (cover != null)
-                FileThumbnail(cover, badge: false)
+                FileThumbnail(cover, badge: false, animateOnHover: false)
               else
                 AspectRatio(
                   aspectRatio: 16 / 9,

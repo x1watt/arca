@@ -194,6 +194,7 @@ class SubtitleStatus {
     this.auto = true,
     this.models = const [],
     this.queued = 0,
+    this.waiting = const [],
     this.currentSha,
     this.currentName = '',
     this.progress = 0,
@@ -204,6 +205,9 @@ class SubtitleStatus {
   final bool auto;
   final List<SpeechModelView> models;
   final int queued;
+
+  /// Files (by SHA-256) waiting for their turn or for the model.
+  final List<String> waiting;
   final String? currentSha;
   final String currentName;
 
@@ -211,6 +215,10 @@ class SubtitleStatus {
   final int progress;
 
   bool get hasModel => models.any((m) => m.id == selected && m.installed);
+
+  /// The model being fetched, if any.
+  SpeechModelView? get downloading =>
+      models.where((m) => m.downloading).firstOrNull;
 
   factory SubtitleStatus.fromMap(Map? m) {
     if (m == null) return const SubtitleStatus();
@@ -225,6 +233,7 @@ class SubtitleStatus {
           SpeechModelView.fromMap(x as Map),
       ],
       queued: m['queued'] as int? ?? 0,
+      waiting: (m['waiting'] as List?)?.cast<String>() ?? const [],
       currentSha: current?['sha256'] as String?,
       currentName: current?['name'] as String? ?? '',
       progress: current?['progress'] as int? ?? 0,
@@ -414,6 +423,7 @@ class CollectionView {
     required this.createdAt,
     required this.size,
     required this.files,
+    this.cover,
   });
 
   final String id;
@@ -424,6 +434,12 @@ class CollectionView {
   final int createdAt;
   final int size;
   final List<FileView> files;
+
+  /// Path of the file the owner picked to show for the collection.
+  final String? cover;
+
+  FileView? get coverFile =>
+      cover == null ? null : files.where((f) => f.path == cover).firstOrNull;
 
   factory CollectionView.fromMap(Map m) {
     final id = m['id'] as String,
@@ -441,6 +457,7 @@ class CollectionView {
         for (final f in m['files'] as List)
           FileView.fromMap(f as Map, id, name, folder),
       ],
+      cover: m['cover'] as String?,
     );
   }
 }
@@ -786,7 +803,13 @@ class Core {
   Future<String?> makeSubtitles(FileView f) =>
       _change('makeSubtitles', {'collection': f.collectionId, 'path': f.path});
 
-  Future<String?> stopSubtitles() => _change('stopSubtitles');
+  /// Stops subtitles for [sha256] (its download, its place in the queue or
+  /// its running job), or the running job when null.
+  Future<String?> stopSubtitles([String? sha256]) =>
+      _change('stopSubtitles', {'sha256': ?sha256});
+
+  Future<String?> setCover(String collection, String? path) =>
+      _change('setCover', {'collection': collection, 'path': path});
 
   // Following and suggestions
 

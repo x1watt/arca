@@ -167,6 +167,13 @@ class _BrowserState extends State<_Browser> {
         await openWithSystem(context, f.absolutePath);
       case 'edit':
         await openMetadataEditor(context, f);
+      case 'cover':
+      case 'uncover':
+        final error = await Core.instance.setCover(
+          f.collectionId,
+          action == 'cover' ? f.path : null,
+        );
+        if (mounted && error != null) showMessage(context, error);
       case 'remove':
       case 'delete':
         final delete = action == 'delete';
@@ -327,14 +334,27 @@ class _BrowserState extends State<_Browser> {
               onTap: () => openFile(context, f),
               trailing: PopupMenuButton<String>(
                 onSelected: (v) => _fileMenu(f, v),
-                itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'open', child: Text('Open')),
-                  PopupMenuItem(value: 'edit', child: Text('Edit details')),
-                  PopupMenuItem(
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'open', child: Text('Open')),
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Text('Edit details'),
+                  ),
+                  if (c.cover == f.path)
+                    const PopupMenuItem(
+                      value: 'uncover',
+                      child: Text('Stop using as collection picture'),
+                    )
+                  else
+                    const PopupMenuItem(
+                      value: 'cover',
+                      child: Text('Use as collection picture'),
+                    ),
+                  const PopupMenuItem(
                     value: 'remove',
                     child: Text('Remove from collection'),
                   ),
-                  PopupMenuItem(
+                  const PopupMenuItem(
                     value: 'delete',
                     child: Text('Delete from disk'),
                   ),

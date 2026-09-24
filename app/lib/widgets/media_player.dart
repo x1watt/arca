@@ -31,10 +31,9 @@ const subtitleLook = SubtitleViewConfiguration(
   padding: EdgeInsets.fromLTRB(48, 0, 48, 36),
 );
 
-/// Plays a video or audio file in place. Uses libmpv through media_kit:
-/// bundled on Android, and the system's libmpv on Linux (package libmpv2).
-/// Shows the preview with a play button until the user starts it, so no
-/// player is created for files nobody plays.
+/// Plays a video or audio file in place, starting as soon as the page
+/// opens. Uses libmpv through media_kit (bundled on Android and in the
+/// Linux bundle). The preview stays up until the first frame is ready.
 class MediaPlayer extends StatefulWidget {
   const MediaPlayer({super.key, required this.file});
   final FileView file;
@@ -47,8 +46,16 @@ class _MediaPlayerState extends State<MediaPlayer> {
   Player? _player;
   VideoController? _controller;
   String? _error;
+  String? _loadedSubtitles;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
 
   Future<void> _start() async {
+    setState(() => _error = null);
     try {
       final player = Player();
       final controller = VideoController(player);
@@ -56,16 +63,6 @@ class _MediaPlayerState extends State<MediaPlayer> {
         if (mounted) setState(() => _error = e);
       });
       await player.open(Media(Uri.file(widget.file.absolutePath).toString()));
-      final subtitles = widget.file.subtitles;
-      if (subtitles != null) {
-        await player.setSubtitleTrack(
-          SubtitleTrack.uri(
-            Uri.file(subtitles).toString(),
-            title: 'Speech recognition',
-            language: widget.file.subtitleLanguage,
-          ),
-        );
-      }
       if (!mounted) {
         await player.dispose();
         return;
@@ -74,13 +71,35 @@ class _MediaPlayerState extends State<MediaPlayer> {
         _player = player;
         _controller = controller;
       });
+      await _loadSubtitles();
     } catch (e) {
+      if (!mounted) return;
       setState(
         () => _error = Platform.isLinux
             ? 'Could not start the player. The libmpv shipped with Arca is missing; reinstall Arca.'
             : 'Could not start the player: $e',
       );
     }
+  }
+
+  /// Shows the file's subtitles, also when they are made while it plays.
+  Future<void> _loadSubtitles() async {
+    final player = _player, path = widget.file.subtitles;
+    if (player == null || path == null || path == _loadedSubtitles) return;
+    _loadedSubtitles = path;
+    await player.setSubtitleTrack(
+      SubtitleTrack.uri(
+        Uri.file(path).toString(),
+        title: 'Subtitles',
+        language: widget.file.subtitleLanguage,
+      ),
+    );
+  }
+
+  @override
+  void didUpdateWidget(MediaPlayer old) {
+    super.didUpdateWidget(old);
+    _loadSubtitles();
   }
 
   @override
@@ -93,7 +112,7 @@ class _MediaPlayerState extends State<MediaPlayer> {
   Widget build(BuildContext context) {
     final controller = _controller;
     final isAudio = kindForMime(widget.file.mime) == FileKind.audio;
-    if (controller != null) {
+    if (controller != null && _error == null) {
       return AspectRatio(
         aspectRatio: isAudio ? 16 / 5 : 16 / 9,
         child: ClipRRect(
@@ -110,18 +129,9 @@ class _MediaPlayerState extends State<MediaPlayer> {
       alignment: Alignment.center,
       children: [
         FileThumbnail(widget.file, badge: false, animateOnHover: false),
-        Material(
-          color: Colors.black54,
-          shape: const CircleBorder(),
-          child: IconButton(
-            iconSize: 56,
-            color: Colors.white,
-            tooltip: 'Play',
-            icon: const Icon(Icons.play_arrow_rounded),
-            onPressed: _start,
-          ),
-        ),
-        if (_error != null)
+        if (_error == null)
+          const CircularProgressIndicator()
+        else
           Positioned(
             left: 12,
             right: 12,
@@ -129,7 +139,17 @@ class _MediaPlayerState extends State<MediaPlayer> {
             child: Container(
               padding: const EdgeInsets.all(8),
               color: Colors.black87,
-              child: Text(_error!, style: const TextStyle(color: Colors.white)),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                  TextButton(onPressed: _start, child: const Text('Try again')),
+                ],
+              ),
             ),
           ),
       ],

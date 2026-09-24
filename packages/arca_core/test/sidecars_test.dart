@@ -76,4 +76,17 @@ void main() {
     final col = await lib.create(name: 'D', folder: d.path, baseFolder: tmp.path);
     expect(col.files.single.title, 'x');
   });
+
+  test('the owner picks the collection picture; removing the file clears it', () async {
+    final d = await Directory('${tmp.path}/cv').create();
+    await File('${d.path}/a.jpg').writeAsString('a');
+    final lib = await openLib();
+    final col = await lib.create(name: 'E', folder: d.path, baseFolder: tmp.path);
+    expect(col.cover, isNull);
+    await lib.setCover(col.id, 'a.jpg');
+    expect((await openLib()).byId(col.id).cover, 'a.jpg');
+    expect(() => lib.setCover(col.id, 'missing.jpg'), throwsA(isA<LibraryException>()));
+    await lib.removeFile(col.id, 'a.jpg');
+    expect(col.cover, isNull);
+  });
 }

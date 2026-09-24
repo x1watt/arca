@@ -414,10 +414,13 @@ class CoreService {
     _downloads.remove(m.id);
     if (error != null) {
       if (!_stopDownloads.contains(m.id)) _downloadErrors[m.id] = error;
-    } else if (_readyModel == null) {
-      _whisperModel = m.id;
-      await _saveSettings();
+    } else {
+      if (_readyModel == null) {
+        _whisperModel = m.id;
+        await _saveSettings();
+      }
       await _queueSubtitles();
+      unawaited(_runSubtitles());
     }
     _push();
   }
@@ -441,6 +444,7 @@ class CoreService {
         },
     ],
     'queued': _subtitleQueue.length,
+    'waiting': _subtitleQueue.keys.toList(),
     if (_subtitleSha != null)
       'current': {'sha256': _subtitleSha, 'name': _subtitleName, 'progress': _transcriber.progress},
   };
@@ -921,9 +925,10 @@ class CoreService {
           } else {
             _subtitleQueue.clear();
           }
+        case 'setCover':
+          await (await _library(_activeId)).setCover(args['collection'] as String, args['path'] as String?);
         case 'makeSubtitles':
-          if (_readyModel == null) return {'error': 'Download a speech model in Settings first'};
-          if (!_transcriber.available()) return {'error': 'Speech recognition is not available in this build'};
+          if (!_transcriber.available()) return {'error': 'Subtitles cannot be made on this device'};
           final col = (await _library(_activeId)).byId(args['collection'] as String);
           final f = col.files.firstWhere((f) => f.path == args['path']);
           await _subtitles.clearFailure(f.sha256);
@@ -934,9 +939,27 @@ class CoreService {
             ..clear()
             ..[f.sha256] = ('${col.folder}/${f.path}', f.name)
             ..addAll(rest);
-          unawaited(_runSubtitles());
+          // No model yet: fetch the one that suits this device first; the
+          // file waits in the queue and starts when it is in.
+          if (_readyModel == null) {
+            final m = modelById(_whisperModel) ?? modelById(recommendedModel())!;
+            _whisperModel = m.id;
+            await _saveSettings();
+            unawaited(_downloadModel(m));
+          } else {
+            unawaited(_runSubtitles());
+          }
         case 'stopSubtitles':
-          _transcriber.cancel();
+          // Stops whatever this file is waiting on: the model download,
+          // its place in the queue, or the running job.
+          final sha = args['sha256'] as String?;
+          if (sha != null && _subtitleSha != sha) {
+            _subtitleQueue.remove(sha);
+            _redo.remove(sha);
+            if (_subtitleQueue.isEmpty) _stopDownloads.addAll(_downloads.keys);
+          } else {
+            _transcriber.cancel();
+          }
         case 'hashFile':
           final (sha256, sha1, size) = await hashFile(File(args['path'] as String));
           return {'sha256': sha256, 'sha1': sha1, 'size': size};

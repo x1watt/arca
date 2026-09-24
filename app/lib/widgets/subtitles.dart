@@ -80,7 +80,8 @@ String _clock(Duration d) {
 }
 
 /// The subtitles part of a video or audio file's page: the transcript when
-/// there is one, the running job, or a way to start one.
+/// there is one, otherwise one button that does everything (fetching the
+/// speech model the first time included) with progress and a way to stop.
 class SubtitlePanel extends StatelessWidget {
   const SubtitlePanel({super.key, required this.file, required this.status});
   final FileView file;
@@ -98,22 +99,50 @@ class SubtitlePanel extends StatelessWidget {
       if (error != null && context.mounted) showMessage(context, error);
     }
 
+    Widget working(String title, double? progress) => ListTile(
+      leading: const Icon(Icons.subtitles_outlined),
+      title: Text(title),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: LinearProgressIndicator(value: progress),
+      ),
+      trailing: TextButton(
+        onPressed: () => run(core.stopSubtitles(file.sha256)),
+        child: const Text('Cancel'),
+      ),
+    );
+
     if (status.currentSha == file.sha256) {
-      final reading = status.progress < 0;
-      return ListTile(
-        leading: const Icon(Icons.subtitles_outlined),
-        title: Text(reading ? 'Reading the audio' : 'Making subtitles'),
-        subtitle: Padding(
-          padding: const EdgeInsets.only(top: 6),
-          child: LinearProgressIndicator(
-            value: reading ? null : status.progress / 100,
+      return status.progress < 0
+          ? working('Making subtitles', null)
+          : working(
+              'Making subtitles: ${status.progress}%',
+              status.progress / 100,
+            );
+    }
+    if (status.waiting.contains(file.sha256)) {
+      final dl = status.downloading;
+      if (dl != null) {
+        return working(
+          'Getting ready to make subtitles',
+          dl.bytes == 0 ? null : dl.received / dl.bytes,
+        );
+      }
+      final failed = status.models
+          .where((m) => m.id == status.selected && m.error != null)
+          .firstOrNull;
+      if (failed != null) {
+        return ListTile(
+          leading: const Icon(Icons.subtitles_outlined),
+          title: const Text('Could not get ready to make subtitles'),
+          subtitle: Text(failed.error!, style: muted),
+          trailing: TextButton(
+            onPressed: () => run(core.makeSubtitles(file)),
+            child: const Text('Try again'),
           ),
-        ),
-        trailing: TextButton(
-          onPressed: () => run(core.stopSubtitles()),
-          child: const Text('Stop'),
-        ),
-      );
+        );
+      }
+      return working('Subtitles are next in line', null);
     }
 
     final subtitles = file.subtitles;
@@ -122,7 +151,7 @@ class SubtitlePanel extends StatelessWidget {
         path: subtitles,
         language: languageName(file.subtitleLanguage),
         machine: file.subtitleMachine,
-        onRedo: status.hasModel && file.subtitleMachine
+        onRedo: file.subtitleMachine
             ? () => run(core.makeSubtitles(file))
             : null,
       );
@@ -132,23 +161,15 @@ class SubtitlePanel extends StatelessWidget {
     return ListTile(
       leading: const Icon(Icons.subtitles_outlined),
       title: const Text('Subtitles'),
-      subtitle: Text(
-        !status.hasModel
-            ? 'Download a speech model in Settings, under Subtitles, to make '
-                  'subtitles on this device.'
-            : file.subtitleError != null
-            ? 'Not made: ${file.subtitleError}'
-            : status.auto
-            ? 'Waiting for the files before it.'
-            : 'None yet.',
-        style: muted,
+      subtitle: file.subtitleError == null
+          ? null
+          : Text('Could not make them: ${file.subtitleError}', style: muted),
+      trailing: FilledButton.tonal(
+        onPressed: () => run(core.makeSubtitles(file)),
+        child: Text(
+          file.subtitleError == null ? 'Make subtitles' : 'Try again',
+        ),
       ),
-      trailing: status.hasModel
-          ? FilledButton.tonal(
-              onPressed: () => run(core.makeSubtitles(file)),
-              child: const Text('Make subtitles'),
-            )
-          : null,
     );
   }
 }
@@ -240,7 +261,7 @@ class _TranscriptState extends State<_Transcript> {
             alignment: Alignment.centerRight,
             child: TextButton(
               onPressed: widget.onRedo,
-              child: const Text('Make again with the current model'),
+              child: const Text('Make again'),
             ),
           ),
       ],

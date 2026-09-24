@@ -105,6 +105,7 @@ class Collection {
     required this.createdAt,
     this.description = '',
     this.circle = Commons.id,
+    this.cover,
     List<LibraryFile>? files,
   }) : files = files ?? [];
 
@@ -118,6 +119,10 @@ class Collection {
   final int createdAt;
   final List<LibraryFile> files;
 
+  /// Path of the file the owner chose to show for the collection; without
+  /// one the collection shows as a folder.
+  String? cover;
+
   int get size => files.fold(0, (n, f) => n + f.size);
 
   Map<String, Object> toJson() => {
@@ -127,6 +132,7 @@ class Collection {
     'circle': circle,
     'folder': folder,
     'createdAt': createdAt,
+    'cover': ?cover,
     'files': [for (final f in files) f.toJson()],
   };
 
@@ -137,6 +143,7 @@ class Collection {
     circle: m['circle'] as String? ?? Commons.id,
     folder: m['folder'] as String,
     createdAt: m['createdAt'] as int,
+    cover: m['cover'] as String?,
     files: [for (final f in m['files'] as List) LibraryFile.fromJson(f as Map<String, dynamic>)],
   );
 }
@@ -426,6 +433,7 @@ class Library {
   Future<void> removeFile(String collectionId, String path, {bool deleteFromDisk = false}) async {
     final col = byId(collectionId);
     col.files.removeWhere((f) => f.path == path);
+    if (col.cover == path) col.cover = null;
     if (deleteFromDisk) {
       final abs = '${col.folder}/$path';
       for (final p in [...sidecars.allOf(abs), abs]) {
@@ -434,6 +442,14 @@ class Library {
       }
       sidecars.changed(abs);
     }
+    await _save();
+  }
+
+  /// Chooses the file shown for the collection, or none with null.
+  Future<void> setCover(String collectionId, String? path) async {
+    final col = byId(collectionId);
+    if (path != null && !col.files.any((f) => f.path == path)) throw LibraryException('No such file in the collection');
+    col.cover = path;
     await _save();
   }
 
