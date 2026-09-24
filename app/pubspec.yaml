@@ -26,3 +26,10 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/arca.png
+
+# media_kit_video with a fix for Linux: it looked for Flutter's EGL context
+# on the platform thread, found none with current Flutter, and fell back to
+# rendering every frame on the CPU (third_party/media_kit_video/ARCA.md).
+dependency_overrides:
+  media_kit_video:
+    path: ../third_party/media_kit_video

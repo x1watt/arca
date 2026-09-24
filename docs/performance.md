@@ -99,6 +99,14 @@ Word timings looked fine but were not the aligned ones: whisper disables DTW ali
 
 The first cue layout looked right on the 11 s JFK sample and was poor on a real video: single orphaned words ("update.", "handle") opening cues, lines of 80 characters. Short samples hide layout problems. Cue layout is now checked on the first minute of a real talk.
 
+### 3.10 4K video drawn on the CPU
+
+A 4K AV1 video stuttered. Decoding was not the problem: this machine decodes it at 4.9 times real time on the CPU and 7.7 times with the GPU (`ffmpeg -f null` over 30 s). media_kit had fallen back to software rendering because it looked for Flutter's EGL context on the platform thread, and current Flutter keeps it on the raster thread ("EGL display or context is invalid", then "S/W rendering" in its log). Every frame was drawn by mpv into memory on the GTK main thread and uploaded again by Flutter.
+
+Fix: a patched copy of media_kit_video (`third_party/media_kit_video/ARCA.md`) sets up mpv's GL rendering on the raster thread. With it, mpv renders into a GPU texture shared with Flutter and uses hardware decoding (`nvdec-copy` on the NVIDIA card here). Two startup races had to be closed: the file must not open before the GPU output exists (mpv then drops the video track), and subtitles must be added only after the file has loaded (earlier, the command failed and could end playback).
+
+> **Rule: read a native plugin's own log once on every platform.** The fallback printed one line and the app kept working, just slowly. `ARCA_MPV_LOG=1` prints mpv's log.
+
 ---
 
 ## 4. The heavy jobs and how they are run

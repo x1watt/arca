@@ -321,7 +321,7 @@ For each video the core makes a still frame (a tenth of the way in) and an anima
 
 ### 9.2 Playback
 
-Video and audio play through libmpv (`media_kit`). Android bundles it in the APK; the Linux bundle carries libmpv, ffmpeg and ffprobe with the libraries they need (`app/linux/packaging/bundle_media.sh`, run by the CMake install step), so nothing has to be installed on the system. Subtitles made on the device (9.3) are loaded as a subtitle track.
+Video and audio play through libmpv (`media_kit`). Android bundles it in the APK; the Linux bundle carries libmpv, ffmpeg and ffprobe with the libraries they need (`app/linux/packaging/bundle_media.sh`, run by the CMake install step), so nothing has to be installed on the system. Subtitles made on the device (9.3) are loaded as a subtitle track. On Linux, mpv renders into a GPU texture shared with Flutter through a patched copy of media_kit_video (`third_party/media_kit_video/ARCA.md`); without it, current Flutter made media_kit fall back to drawing every frame on the CPU. A click on the picture plays or pauses; the page starts playback when it opens.
 
 ### 9.3 Subtitles
 

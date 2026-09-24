@@ -31,6 +31,10 @@ const subtitleLook = SubtitleViewConfiguration(
   padding: EdgeInsets.fromLTRB(48, 0, 48, 36),
 );
 
+const _desktopControls = MaterialDesktopVideoControlsThemeData(
+  playAndPauseOnTap: true,
+);
+
 /// Plays a video or audio file in place, starting as soon as the page
 /// opens. Uses libmpv through media_kit (bundled on Android and in the
 /// Linux bundle). The preview stays up until the first frame is ready.
@@ -47,6 +51,7 @@ class _MediaPlayerState extends State<MediaPlayer> {
   VideoController? _controller;
   String? _error;
   String? _loadedSubtitles;
+  bool _fileLoaded = false;
 
   @override
   void initState() {
@@ -57,20 +62,56 @@ class _MediaPlayerState extends State<MediaPlayer> {
   Future<void> _start() async {
     setState(() => _error = null);
     try {
-      final player = Player();
-      final controller = VideoController(player);
-      player.stream.error.listen((e) {
-        if (mounted) setState(() => _error = e);
-      });
-      await player.open(Media(Uri.file(widget.file.absolutePath).toString()));
-      if (!mounted) {
-        await player.dispose();
-        return;
+      // ARCA_MPV_LOG=1 prints libmpv's log, for diagnosing playback.
+      final log = Platform.environment['ARCA_MPV_LOG'] == '1';
+      final player = Player(
+        configuration: PlayerConfiguration(
+          logLevel: log ? MPVLogLevel.v : MPVLogLevel.error,
+        ),
+      );
+      if (log) {
+        player.stream.log.listen(
+          (l) => stderr.writeln('mpv ${l.prefix}: ${l.text}'),
+        );
       }
+      final controller = VideoController(player);
+      // Put the video surface on screen before opening the file: on Linux
+      // its GPU setup runs on the first frame Flutter draws of it, and mpv
+      // needs that output when it starts the video.
       setState(() {
         _player = player;
         _controller = controller;
       });
+      if (player.platform case final NativePlayer native
+          when Platform.isLinux) {
+        // The plugin says when its GPU output is ready; give up waiting
+        // after three seconds and let it attach late.
+        for (var i = 0; i < 100 && mounted; i++) {
+          await WidgetsBinding.instance.endOfFrame;
+          if (await native.getProperty('user-data/arca/gl-ready') == 'yes') {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+        }
+      }
+      if (!mounted) {
+        await player.dispose();
+        return;
+      }
+      // Subtitles are chosen here (_loadSubtitles); without this mpv also
+      // loads the ones beside the file and lists them twice.
+      if (player.platform case final NativePlayer native) {
+        await native.setProperty('sub-auto', 'no');
+        // At the end, stay on the last frame instead of going black.
+        await native.setProperty('keep-open', 'yes');
+      }
+      await player.open(Media(Uri.file(widget.file.absolutePath).toString()));
+      // Subtitles can only be added once the file is loaded.
+      await player.stream.duration
+          .firstWhere((d) => d > Duration.zero)
+          .timeout(const Duration(seconds: 10), onTimeout: () => Duration.zero);
+      if (!mounted) return;
+      _fileLoaded = true;
       await _loadSubtitles();
     } catch (e) {
       if (!mounted) return;
@@ -85,15 +126,19 @@ class _MediaPlayerState extends State<MediaPlayer> {
   /// Shows the file's subtitles, also when they are made while it plays.
   Future<void> _loadSubtitles() async {
     final player = _player, path = widget.file.subtitles;
-    if (player == null || path == null || path == _loadedSubtitles) return;
+    if (player == null || !_fileLoaded) return;
+    if (path == null || path == _loadedSubtitles) return;
     _loadedSubtitles = path;
-    await player.setSubtitleTrack(
-      SubtitleTrack.uri(
-        Uri.file(path).toString(),
-        title: 'Subtitles',
-        language: widget.file.subtitleLanguage,
-      ),
-    );
+    // A subtitle file that cannot be read leaves the video playing.
+    try {
+      await player.setSubtitleTrack(
+        SubtitleTrack.uri(
+          path,
+          title: 'Subtitles',
+          language: widget.file.subtitleLanguage,
+        ),
+      );
+    } catch (_) {}
   }
 
   @override
@@ -117,10 +162,16 @@ class _MediaPlayerState extends State<MediaPlayer> {
         aspectRatio: isAudio ? 16 / 5 : 16 / 9,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
-          child: Video(
-            controller: controller,
-            controls: AdaptiveVideoControls,
-            subtitleViewConfiguration: subtitleLook,
+          // A click on the picture plays or pauses, as on video sites; a
+          // double click still goes fullscreen.
+          child: MaterialDesktopVideoControlsTheme(
+            normal: _desktopControls,
+            fullscreen: _desktopControls,
+            child: Video(
+              controller: controller,
+              controls: AdaptiveVideoControls,
+              subtitleViewConfiguration: subtitleLook,
+            ),
           ),
         ),
       );
