@@ -2,7 +2,7 @@
 
 This document describes how the Arca client is built: identities and profiles, Nostr as the protocol for people and their messages, I2P as the only network, and how data is stored on the device. It is written before implementation and is the reference the code must follow. The economic and consensus design (marcas, Proof of Stewardship, the global chain) is in `arca-whitepaper.md`; this document covers the client and its communication, and points to the whitepaper where the two meet.
 
-Status: implemented in `packages/arca_core` (pure Dart, tested) and wired into the app: BIP-340 keys and signatures, NIP-19, NIP-01 events, filters and relay messages, an event store, a relay and client over a message link, the profile store with encrypted vaults, and the network manager, all on a core isolate. The app creates a profile on first run; can create, import (nsec), rename, switch, export and delete profiles; starts an I2P node with `i2p-dart`; and puts the active profile and those set to stay online on the network, each with its own destination and relay. A rename publishes the profile as a kind 0 event in its own relay. Every profile starts in the built-in catch-all circle, Arca Commons; it can create collections (a new folder under the default storage folder, or an existing folder), add files and folders (copied in, hashed with SHA-256 and SHA-1, type detected from content), edit titles, descriptions and tags, and comment on files and collections. Each collection is published as an addressable event (provisional kind 30780) and each comment as a kind 1111 event in the profile's relay. Verified end to end on the live I2P network (`packages/arca_core/tool/live_i2p_check.dart`): one profile fetched another's signed kind 0 through real tunnels. Until circles exist, a profile's relay only keeps its own events and events that tag it. Videos get a still preview and an animated hover preview made with ffmpeg run from the core isolate, and play in the app through libmpv (media_kit). Both ship with the app: Android bundles libmpv, and the Linux bundle carries libmpv, ffmpeg and ffprobe with their libraries (app/linux/packaging/bundle_media.sh, run by the CMake install step), so nothing has to be installed on the system. A profile can follow someone by Arca address (`arca:npub...@....b32.i2p`), fetch their profile and collection events from their relay over I2P, and suggest title, description and tag changes to their files: the suggestion is a signed event (provisional kind 4781, tagged with the owner, the collection and the file hash) delivered to the owner's relay; the owner accepts or rejects it, which republishes the collection and publishes a kind 7 reaction (+ or -) the suggester can read back. Verified end to end with two instances on the live I2P network. The UI shows only real data. Not yet: other people fetching collections and files over I2P, creating circles, circle relays, and Blossom.
+Status: implemented in `packages/arca_core` (pure Dart, tested) and wired into the app: BIP-340 keys and signatures, NIP-19, NIP-01 events, filters and relay messages, an event store, a relay and client over a message link, the profile store with encrypted vaults, and the network manager, all on a core isolate. The app creates a profile on first run; can create, import (nsec), rename, switch, export and delete profiles; starts an I2P node with `i2p-dart`; and puts the active profile and those set to stay online on the network, each with its own destination and relay. A rename publishes the profile as a kind 0 event in its own relay. Every profile starts in the built-in catch-all circle, Arca Commons; it can create collections (a new folder under the default storage folder, or an existing folder), add files and folders (copied in, hashed with SHA-256 and SHA-1, type detected from content), edit titles, descriptions and tags, and comment on files and collections. Each collection is published as an addressable event (provisional kind 30780) and each comment as a kind 1111 event in the profile's relay. Verified end to end on the live I2P network (`packages/arca_core/tool/live_i2p_check.dart`): one profile fetched another's signed kind 0 through real tunnels. Until circles exist, a profile's relay only keeps its own events and events that tag it. Videos get a still preview and an animated hover preview made with ffmpeg run from the core isolate, and play in the app through libmpv (media_kit). Both ship with the app: Android bundles libmpv, and the Linux bundle carries libmpv, ffmpeg and ffprobe with their libraries (app/linux/packaging/bundle_media.sh, run by the CMake install step), so nothing has to be installed on the system. A profile can follow someone by Arca address (`arca:npub...@....b32.i2p`), fetch their profile and collection events from their relay over I2P, and suggest title, description and tag changes to their files: the suggestion is a signed event (provisional kind 4781, tagged with the owner, the collection and the file hash) delivered to the owner's relay; the owner accepts or rejects it, which republishes the collection and publishes a kind 7 reaction (+ or -) the suggester can read back. Verified end to end with two instances on the live I2P network. Subtitles are made on the device with whisper.cpp from a speech model downloaded on demand (9.3). The UI shows only real data. Not yet: other people fetching collections and files over I2P, creating circles, circle relays, and Blossom.
 
 ## 1. Principles
 
@@ -267,6 +267,9 @@ arca/
   content/             shared content store: chunks and blobs by SHA-256
   catalogs/            downloaded circle catalogs, shared by all profiles
   media/               Blossom blobs by SHA-256 (own uploads, and media kept for others)
+  previews/            video stills and hover GIFs by SHA-256 (9.1)
+  subtitles/           subtitles made on the device, by SHA-256 (9.3)
+  models/              downloaded speech models (9.3)
   profiles/
     <profile id>/
       vault.bin        encrypted nsec and I2P destination seeds
@@ -308,7 +311,31 @@ The UI talks to the core through a request and response API plus state streams. 
 
 **Delete a profile.** Stop its destination, delete its vault, settings and databases, and remove its references to shared folders and content (content still used by other profiles stays). Optionally publish kind 5 deletions for its events first.
 
-## 9. Open questions
+## 9. Media on the device
+
+Everything here runs on the device, from the files themselves; nothing is sent anywhere.
+
+### 9.1 Previews
+
+For each video the core makes a still frame (a tenth of the way in) and an animated GIF of ten frames from across the clip, shown when the pointer rests on a thumbnail. They are made with ffmpeg in a separate process and stored by the file's SHA-256 in `previews/`, so every collection holding the same clip shares them.
+
+### 9.2 Playback
+
+Video and audio play through libmpv (`media_kit`). Android bundles it in the APK; the Linux bundle carries libmpv, ffmpeg and ffprobe with the libraries they need (`app/linux/packaging/bundle_media.sh`, run by the CMake install step), so nothing has to be installed on the system. Subtitles made on the device (9.3) are loaded as a subtitle track.
+
+### 9.3 Subtitles
+
+Subtitles are made from the speech in videos and audio with whisper.cpp, built from the `third_party/whisper.cpp` submodule into `libarca_whisper.so` behind a small C interface (`native/arca_whisper`), for Linux by the app's CMake build and for Android by Gradle's CMake build.
+
+- **Decoding.** The audio track is decoded to 16 kHz mono WAV through libmpv, which the app already carries, so the same code works on Android, where there is no ffmpeg.
+- **Threads.** Decoding and recognition block their thread for minutes, so they run on a worker isolate the core spawns per file; the core reads progress from shared native memory and can stop the job. One file at a time, with half of the processors on a computer and at most four on a phone.
+- **Models.** Not part of the app. The user downloads one from Settings; the app recommends the one that fits the device: Tiny (31 MB) for phones under 6 GB of memory, Base (57 MB) for other phones, Small (181 MB) for computers under 7 GB, and Large turbo (547 MB) for the rest. Models are quantized ggml files, unchanged copies of `ggerganov/whisper.cpp` on Hugging Face, published as assets of the `models-v1` release of `github.com/x1watt/arca`. Downloads continue where they stopped and are checked against the SHA-256 the app carries; a file that does not match is discarded. Stored in `models/`.
+- **Automatic.** With a model chosen and automatic subtitles on (the default), every video and audio file of the active profile's collections is queued when the app opens and when files are added. The user can make them again for a file (for example after switching to a better model) or stop the running job. A file that cannot be done (no sound, unreadable) is marked and skipped until asked for by hand.
+- **Storage.** `subtitles/<sha256>.srt` with the detected language beside it, shared by every collection holding the file. Publishing subtitles as file metadata for others comes with sharing over I2P.
+
+The model download is the one connection that does not go over I2P: a plain HTTPS download from GitHub, started by the user, carrying no profile key or address. It reveals to GitHub that this IP downloaded a speech model, nothing about the profile.
+
+## 10. Open questions
 
 - Exact Arca event kinds and their tags (collection head, catalog announcements, circle log entries).
 - Port numbers and the control protocol's message set.

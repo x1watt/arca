@@ -27,6 +27,27 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Speech recognition always optimized, even in debug builds.
+        externalNativeBuild {
+            cmake {
+                // Few compile jobs at a time: ggml is heavy to compile and the
+                // Gradle daemon shares the memory.
+                arguments += listOf(
+                    "-DCMAKE_BUILD_TYPE=Release",
+                    "-DCMAKE_JOB_POOLS=compile=4",
+                    "-DCMAKE_JOB_POOL_COMPILE=compile",
+                )
+            }
+        }
+    }
+
+    // libarca_whisper.so: whisper.cpp for subtitles (native/arca_whisper).
+    externalNativeBuild {
+        cmake {
+            path = file("../../../native/arca_whisper/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {

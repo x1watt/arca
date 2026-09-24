@@ -405,6 +405,8 @@ class _NewCollectionDialogState extends State<_NewCollectionDialog> {
     final theme = Theme.of(context);
     return AlertDialog(
       title: const Text('New collection'),
+      // Scrolls on small screens with large text instead of overflowing.
+      scrollable: true,
       content: SizedBox(
         width: 480,
         child: Column(

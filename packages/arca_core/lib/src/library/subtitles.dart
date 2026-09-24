@@ -1,5 +1,5 @@
 // Subtitles for videos and audio, made on the device with whisper.cpp
-// (docs/architecture.md, 8.3). The speech models are not shipped with the
+// (docs/architecture.md, 9.3). The speech models are not shipped with the
 // app: the user downloads one, sized for the device, from Arca's releases.
 // The audio track is decoded to 16 kHz WAV through libmpv, which the app
 // already carries for playback, so this works where there is no ffmpeg
@@ -201,29 +201,42 @@ class SubtitleStore {
   File _meta(String sha256) => File('$dir/$sha256.json');
   File _failed(String sha256) => File('$dir/$sha256.failed');
 
-  bool has(String sha256) => srt(sha256).existsSync();
-  bool failed(String sha256) => _failed(sha256).existsSync();
+  // The state sent to the UI asks for these for every file on every
+  // update, so they are read from disk once and then kept in memory.
+  final _metaCache = <String, Map<String, Object?>>{};
+  final _failureCache = <String, String?>{};
 
-  Map<String, Object?> meta(String sha256) {
+  bool has(String sha256) => srt(sha256).existsSync();
+  bool failed(String sha256) => failure(sha256) != null;
+
+  Map<String, Object?> meta(String sha256) => _metaCache[sha256] ??= () {
     try {
       return (jsonDecode(_meta(sha256).readAsStringSync()) as Map).cast<String, Object?>();
     } catch (_) {
-      return const {};
+      return const <String, Object?>{};
     }
-  }
+  }();
 
-  String? failure(String sha256) => failed(sha256) ? _failed(sha256).readAsStringSync() : null;
+  String? failure(String sha256) => _failureCache.putIfAbsent(sha256, () {
+    final f = _failed(sha256);
+    return f.existsSync() ? f.readAsStringSync() : null;
+  });
 
   Future<void> markFailed(String sha256, String why) async {
     await Directory(dir).create(recursive: true);
     await _failed(sha256).writeAsString(why);
+    _failureCache[sha256] = why;
   }
 
   Future<void> clearFailure(String sha256) async {
     if (await _failed(sha256).exists()) await _failed(sha256).delete();
+    _failureCache[sha256] = null;
   }
 
-  Future<void> saveMeta(String sha256, Map<String, Object?> m) => _meta(sha256).writeAsString(jsonEncode(m));
+  Future<void> saveMeta(String sha256, Map<String, Object?> m) async {
+    await _meta(sha256).writeAsString(jsonEncode(m));
+    _metaCache[sha256] = m;
+  }
 }
 
 /// Finds the native libraries: next to the app (Linux bundle `lib/`), in
@@ -428,6 +441,9 @@ String? decodeAudio(String input, String wav, {bool Function()? cancelled}) {
         Pointer<_MpvEvent> Function(Pointer<Void>, Double),
         Pointer<_MpvEvent> Function(Pointer<Void>, double)
       >('mpv_wait_event');
+  final errorString = lib.lookupFunction<Pointer<Utf8> Function(Int32), Pointer<Utf8> Function(int)>(
+    'mpv_error_string',
+  );
   final destroy = lib.lookupFunction<Void Function(Pointer<Void>), void Function(Pointer<Void>)>(
     'mpv_terminate_destroy',
   );
@@ -445,7 +461,9 @@ String? decodeAudio(String input, String wav, {bool Function()? cancelled}) {
     const options = {
       'config': 'no',
       'terminal': 'no',
-      'idle': 'no',
+      // Stay up with an empty playlist: with idle off, mpv can quit before
+      // the loadfile command arrives.
+      'idle': 'yes',
       'load-scripts': 'no',
       'ytdl': 'no',
       'vid': 'no',
@@ -475,8 +493,10 @@ String? decodeAudio(String input, String wav, {bool Function()? cancelled}) {
           case 8: // file loaded
             hadAudio = true;
           case 7: // end of file
-            final reason = e.data.cast<_MpvEndFile>().ref.reason;
-            if (reason == 4 || !hadAudio) return 'The file could not be decoded.';
+            final end = e.data.cast<_MpvEndFile>().ref;
+            if (end.reason == 4 || !hadAudio) {
+              return 'The file could not be decoded (${errorString(end.error).toDartString()}).';
+            }
             final f = File(wav);
             if (!f.existsSync() || f.lengthSync() <= 44) return 'The file has no sound to transcribe.';
             return null;

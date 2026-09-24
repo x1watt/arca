@@ -38,7 +38,7 @@ class CoreService {
   final _follows = <String, FollowStore>{};
   late final VideoPreviews _previews = VideoPreviews('$_dataDir/previews');
 
-  // Subtitles (docs/architecture.md, 8.3): the chosen speech model, whether
+  // Subtitles (docs/architecture.md, 9.3): the chosen speech model, whether
   // new videos and audio are done automatically, downloads in progress and
   // the queue of files waiting, done one at a time.
   late final ModelStore _models = ModelStore('$_dataDir/models');

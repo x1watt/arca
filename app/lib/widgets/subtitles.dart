@@ -350,13 +350,33 @@ class _ModelTile extends StatelessWidget {
       else
         formatBytes(m.bytes),
     ];
+    final action = m.installed
+        ? TextButton.icon(
+            onPressed: () => onRun(core.deleteModel(m.id)),
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('Delete'),
+          )
+        : m.downloading
+        ? TextButton.icon(
+            onPressed: () => onRun(core.stopDownload(m.id)),
+            icon: const Icon(Icons.stop_circle_outlined),
+            label: const Text('Stop'),
+          )
+        : TextButton.icon(
+            onPressed: () => onRun(core.downloadModel(m.id)),
+            icon: const Icon(Icons.download_outlined),
+            label: Text(m.received > 0 ? 'Continue' : 'Download'),
+          );
+    // Actions sit under the text, so the row stays readable on a phone.
     return ListTile(
       leading: Radio<String>(value: m.id, enabled: m.installed),
-      title: Row(
+      title: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Flexible(child: Text(m.label)),
-          if (recommended) ...[
-            const SizedBox(width: 8),
+          Text(m.label),
+          if (recommended)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
@@ -368,7 +388,6 @@ class _ModelTile extends StatelessWidget {
                 style: theme.textTheme.labelSmall,
               ),
             ),
-          ],
         ],
       ),
       subtitle: Column(
@@ -384,24 +403,9 @@ class _ModelTile extends StatelessWidget {
             ),
           if (m.error != null)
             Text(m.error!, style: TextStyle(color: theme.colorScheme.error)),
+          Align(alignment: AlignmentDirectional.centerStart, child: action),
         ],
       ),
-      isThreeLine: true,
-      trailing: m.installed
-          ? IconButton(
-              tooltip: 'Delete model',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: () => onRun(core.deleteModel(m.id)),
-            )
-          : m.downloading
-          ? TextButton(
-              onPressed: () => onRun(core.stopDownload(m.id)),
-              child: const Text('Stop'),
-            )
-          : TextButton(
-              onPressed: () => onRun(core.downloadModel(m.id)),
-              child: Text(m.received > 0 ? 'Continue' : 'Download'),
-            ),
     );
   }
 }
