@@ -1,0 +1,12 @@
+<!-- Monochrome layer for themed icons (Android 13+): only the shape counts,
+     the launcher colours it. The clasp is cut out, the keyhole left in. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 108 108">
+  <g transform="translate(54 54) scale(0.17) translate(-256 -262)">
+    <path fill="#ffffff" fill-rule="evenodd" d="
+      M112 212 Q112 124 256 124 Q400 124 400 212 Z
+      M130 228 H382 Q400 228 400 246 V382 Q400 400 382 400 H130 Q112 400 112 382 V246 Q112 228 130 228 Z
+      M238 236 H274 Q286 236 286 248 V296 Q286 308 274 308 H238 Q226 308 226 296 V248 Q226 236 238 236 Z"/>
+    <circle cx="256" cy="266" r="11" fill="#ffffff"/>
+    <rect x="251" y="270" width="10" height="24" rx="4" fill="#ffffff"/>
+  </g>
+</svg>

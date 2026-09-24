@@ -1,0 +1,15 @@
+<!-- Adaptive icon foreground (Android): the chest from arca.svg, centred in
+     a 108 unit canvas and kept inside the 66 unit safe zone launchers never
+     crop. The background layer is the flat colour #1c1c1c. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 108 108">
+  <g transform="translate(54 54) scale(0.17) translate(-256 -262)">
+    <path d="M112 212 Q112 124 256 124 Q400 124 400 212 Z" fill="#e8a33d"/>
+    <rect x="112" y="228" width="288" height="172" rx="18" fill="#e8a33d"/>
+    <rect x="112" y="228" width="288" height="22" fill="#0f0f0f" opacity="0.35"/>
+    <rect x="164" y="124" width="22" height="276" fill="#0f0f0f" opacity="0.25"/>
+    <rect x="326" y="124" width="22" height="276" fill="#0f0f0f" opacity="0.25"/>
+    <rect x="226" y="236" width="60" height="72" rx="12" fill="#1a1a1a"/>
+    <circle cx="256" cy="266" r="11" fill="#e8a33d"/>
+    <rect x="251" y="270" width="10" height="24" rx="4" fill="#e8a33d"/>
+  </g>
+</svg>

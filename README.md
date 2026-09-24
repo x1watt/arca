@@ -19,6 +19,8 @@ A shared library of files that anyone can browse, keep copies of and add to, lik
 
 To build on Linux you need `cmake`, `patchelf`, `libmpv2` and `ffmpeg` (on Ubuntu: `sudo apt install cmake patchelf libmpv-dev ffmpeg`). The Linux bundle carries libmpv, ffmpeg and their libraries (`app/linux/packaging/bundle_media.sh`), so it runs without them installed.
 
+To add Arca to the desktop's application list (menu, dock and window icon), run `app/linux/packaging/install_desktop.sh` after building; `--remove` takes it out again. Icons for both platforms are generated from `app/assets/icon/*.svg` by `app/tool/make_icons.sh`.
+
 ## Speech models
 
 Subtitles are made on the device with whisper.cpp. The models are not part of the app. From Settings, under Subtitles, the app downloads the model that suits the device from this repository's [models-v1 release](https://github.com/x1watt/arca/releases/tag/models-v1) and checks its SHA-256. These are unchanged copies of the quantized models from [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp) on Hugging Face (MIT license):

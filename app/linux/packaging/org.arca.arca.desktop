@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Arca
+GenericName=File library
+Comment=Browse, keep and share collections of files, over I2P
+Exec=@BUNDLE@/arca %U
+TryExec=@BUNDLE@/arca
+Icon=org.arca.arca
+StartupWMClass=org.arca.arca
+StartupNotify=true
+Categories=Network;FileTransfer;
+Keywords=files;library;collections;sharing;i2p;nostr;
+Terminal=false

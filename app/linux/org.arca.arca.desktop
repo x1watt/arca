@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Arca
-Comment=Shared library of files: search, collections and transfers
-Exec=@BUNDLE@/arca
-Icon=@BUNDLE@/data/arca.png
-StartupWMClass=org.arca.arca
-Categories=Network;FileTransfer;
-Terminal=false
