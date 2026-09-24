@@ -1,0 +1,18 @@
+# Build output and tool caches
+build/
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+**/linux/flutter/ephemeral/
+**/android/.gradle/
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/android/app/.cxx/
+*.iml
+.idea/
+.vscode/
+
+# Speech models are downloaded at run time, never committed
+*.bin
+*.part

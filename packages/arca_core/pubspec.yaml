@@ -1,0 +1,20 @@
+name: arca_core
+description: >-
+  Arca's core in pure Dart: Nostr keys, events and the relay protocol,
+  profiles and their vaults, and the I2P transport seam.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  crypto: ^3.0.3
+  ffi: ^2.1.0
+  cryptography: ^2.7.0
+  i2p:
+    path: ../../../i2p-dart
+
+dev_dependencies:
+  lints: ^4.0.0
+  test: ^1.25.0
