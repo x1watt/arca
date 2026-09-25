@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'core/core_client.dart';
+import 'core/playback.dart';
 
 import 'screens/collections_screen.dart';
 import 'screens/search_screen.dart';
@@ -14,6 +15,11 @@ Future<void> main() async {
   // the device's first profile (docs/architecture.md, 3.2).
   await Core.instance.start();
   runApp(const ArcaApp());
+  // The media player is set up once the first screen is drawn, so the
+  // first video opens without waiting for it (core/playback.dart).
+  WidgetsBinding.instance.addPostFrameCallback(
+    (_) => Playback.instance.warmUp(),
+  );
 }
 
 class ArcaApp extends StatelessWidget {
@@ -28,6 +34,19 @@ class ArcaApp extends StatelessWidget {
       darkTheme: arcaDarkTheme(),
       theme: arcaDarkTheme(),
       home: const HomeShell(),
+      builder: (context, child) => Stack(
+        fit: StackFit.expand,
+        children: [
+          child!,
+          const Positioned(
+            left: 0,
+            top: 0,
+            width: 1,
+            height: 1,
+            child: PlaybackSurface(),
+          ),
+        ],
+      ),
     );
   }
 }

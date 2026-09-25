@@ -113,6 +113,11 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  using clk = std::chrono::steady_clock;
+  auto ms = [](clk::time_point a, clk::time_point b) {
+    return std::chrono::duration<double, std::milli>(b - a).count();
+  };
+  auto t_create = clk::now();
   mpv_handle* mpv = mpv_create();
   mpv_set_option_string(mpv, "vo", "libmpv");
   mpv_set_option_string(mpv, "hwdec", hwdec);
@@ -120,6 +125,7 @@ int main(int argc, char** argv) {
   mpv_set_option_string(mpv, "video-sync", "audio");
   mpv_request_log_messages(mpv, "v");
   mpv_initialize(mpv);
+  auto t_init = clk::now();
   mpv_opengl_init_params gl{[](void*, const char* name) { return (void*)eglGetProcAddress(name); }, nullptr};
   mpv_render_param params[] = {{MPV_RENDER_PARAM_API_TYPE, (void*)MPV_RENDER_API_TYPE_OPENGL},
                                {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl},
@@ -130,9 +136,11 @@ int main(int argc, char** argv) {
     return 1;
   }
   mpv_render_context_set_update_callback(rc, [](void*) { g_update = true; }, nullptr);
+  auto t_rc = clk::now();
   leave();
 
   const char* cmd[] = {"loadfile", file, nullptr};
+  auto t_load = clk::now();
   mpv_command(mpv, cmd);
 
   int frames = 0;
@@ -165,6 +173,8 @@ int main(int argc, char** argv) {
         glFlush();
         leave();
         if (!started) {
+          printf("timing: mpv create+init %.0f ms, render context %.0f ms, loadfile to first frame %.0f ms\n",
+                 ms(t_create, t_init), ms(t_init, t_rc), ms(t_load, clk::now()));
           started = true;
           t0 = std::chrono::steady_clock::now();
           cpu0 = cpu_seconds();

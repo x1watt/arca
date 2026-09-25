@@ -128,6 +128,16 @@ On Android the obvious zero-copy option measured worse. On the C61, a 1080p H.26
 
 > **Rule: measure the "obviously faster" option before shipping it.** Zero-copy won by a factor of three on the desktop and lost on the phone.
 
+### 3.12 Five seconds from tap to picture
+
+Opening a video took about five seconds before anything moved. A trace from the tap (release build, Xvfb, 3 opens each) put it down to one line: the player page waited for the plugin's "GPU output ready" property before opening the file, polling it every 30 ms plus a frame for up to three seconds, and the property never read back as ready, so every open waited the full loop. Everything else together took about 250 ms: creating the player 5 ms, the GPU render context 120 ms on the first open, opening the file 40 ms, and on the RTX 3080 (`native/tools/zero_copy_check.cc`, now printing these timings) 120 to 190 ms from loadfile to the first frame whatever the decoder.
+
+Fix (`app/lib/core/playback.dart`): one player for the whole session, created after the first screen is drawn, with a one-pixel view of it kept on screen at the app's root so its GPU output is set up at start, never on a tap. The file starts loading when its card is tapped, so loading overlaps the page transition, and the page keeps the still preview up until the picture moves, so there is no black box. Measured after: 510 to 530 ms from tap to moving picture on Xvfb with a 4K file on software GL; the steps before the file opens take 10 to 25 ms.
+
+> **Rule: a wait with a timeout hides its own failure.** The loop "worked" by giving up after three seconds every time. Trace from the user's tap, not from the function you suspect.
+>
+> **Rule: create long-lived media objects once.** A player, its isolate and its GPU output cost the same whether one video is watched or fifty; pay once, at start, off the tap.
+
 ---
 
 ## 4. The heavy jobs and how they are run

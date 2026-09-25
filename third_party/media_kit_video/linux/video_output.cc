@@ -314,11 +314,6 @@ gboolean video_output_ensure_gl(VideoOutput* self) {
         self);
     self->gl_failed = FALSE;
     g_print("media_kit: VideoOutput: H/W rendering on the raster thread's EGL display.\n");
-    // Tells the app it can open files now (user-data/arca/gl-ready).
-    // Asynchronous: this runs on the raster thread.
-    const char* ready = "yes";
-    mpv_set_property_async(self->handle, 0, "user-data/arca/gl-ready",
-                           MPV_FORMAT_STRING, &ready);
     // A file opened before this point found no video output and mpv
     // dropped its video track ("Video: no video"); select the first video
     // track again now that there is an output. "auto" is not re-evaluated

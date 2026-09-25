@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../core/core_client.dart';
+import '../core/playback.dart';
 import '../core/pickers.dart';
 import '../models/kinds.dart';
 import '../screens/circle_screen.dart';
@@ -24,9 +25,13 @@ List<Color> paletteFor(String key) =>
     _palettes[key.codeUnits.fold(0, (a, b) => (a * 31 + b) & 0x7fffffff) %
         _palettes.length];
 
-void openFile(BuildContext context, FileView file) => Navigator.of(
-  context,
-).push(MaterialPageRoute<void>(builder: (_) => FileDetailScreen(file: file)));
+void openFile(BuildContext context, FileView file) {
+  // Videos start loading now, while the page slides in.
+  if (Playback.plays(file)) Playback.instance.prepare(file);
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => FileDetailScreen(file: file)));
+}
 
 void openCollection(BuildContext context, String collectionId) =>
     Navigator.of(context).push(
