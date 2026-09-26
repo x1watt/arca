@@ -405,7 +405,8 @@ class PayoutTable {
   final List<String> keys;
   final Map<String, int> totals;
 
-  static Uint8List leaf(String circle, String key, int total) => leafHash(utf8.encode('arca-payout|$circle|$key|$total'));
+  static Uint8List leaf(String circle, String key, int total) =>
+      leafHash(utf8.encode('arca-payout|$circle|$key|$total'));
 
   List<Uint8List> get _leaves => [for (final k in keys) leaf(circle, k, totals[k]!)];
 
@@ -453,5 +454,16 @@ Map<String, int> distribute(
 /// What a moderator signs to agree to a change of admin or moderators on
 /// the chain (rule 6).
 Uint8List governanceMessage(String circle, String admin, List<String> moderators) => Uint8List.fromList(
-  c.sha256.convert(utf8.encode(canonicalJson(['arca-gov-v1', circle, admin, [...moderators]..sort()]))).bytes,
+  c.sha256
+      .convert(
+        utf8.encode(
+          canonicalJson([
+            'arca-gov-v1',
+            circle,
+            admin,
+            [...moderators]..sort(),
+          ]),
+        ),
+      )
+      .bytes,
 );

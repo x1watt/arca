@@ -7,22 +7,29 @@
 //   {"t":"block","b":{...}}   a block
 //   {"t":"tx","tx":{...}}      a transaction
 //   {"t":"get","have":[...]}  "send me your chain after the newest of
-//                             these block hashes you also have"
+//                             these block hashes you also have"; with
+//                             "headers":true, headers only (light clients)
+//   {"t":"header","h":{...}}  a block header, for light clients
+//   {"t":"part",...}          one part of a message too big for one
+//                             datagram (fraud proofs, snapshot pages)
+//   {"t":"fraud","f":{...}}   a fraud proof (fraud.dart)
+//   {"t":"entry",...}         a state entry and its proof, asked or given
+//   {"t":"snapshot",...}      a page of a state's entries, asked or given
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import '../transport/link.dart';
 import 'block.dart';
+import 'wire.dart';
+import 'fraud.dart';
 import 'mining.dart';
 import 'params.dart';
+import 'smt.dart';
 import 'state.dart';
 import 'tx.dart';
-
-const _tag = 0xC1;
 
 String _short(String? s) => s == null || s.length <= 6 ? '$s' : s.substring(0, 6);
 
@@ -89,7 +96,9 @@ class ChainNode {
   int get currentTick => _now().millisecondsSinceEpoch ~/ params.tickMillis;
 
   void start() {
-    _sub = link.incoming.where((m) => m.to == address && m.bytes.isNotEmpty && m.bytes[0] == _tag).listen(_onInbound);
+    _sub = link.incoming
+        .where((m) => m.to == address && m.bytes.isNotEmpty && m.bytes[0] == chainTag)
+        .listen(_onInbound);
     _timer = Timer.periodic(Duration(milliseconds: params.tickMillis), (_) => _onTick());
     for (final p in peers) {
       _askChain(p);
@@ -165,6 +174,7 @@ class ChainNode {
       next = await b.applyTo(parent.state);
     } on ChainError catch (e) {
       log?.call('rejected block ${b.height} ${_short(hash)} from ${_short(from)}: $e');
+      unawaited(_proveFraud(parent, b));
       return;
     }
     // Work is what the target asked for, not what the proof happened to
@@ -184,7 +194,7 @@ class ChainNode {
       _mempool.removeWhere((_, t) => _stale(t, next));
       onHead?.call(next);
     }
-    _broadcast({'t': 'block', 'b': b.toJson()}, except: from);
+    _broadcastBlock(b, except: from);
     for (final child in _orphans.remove(hash) ?? const <Block>[]) {
       await _accept(child, from);
     }
@@ -282,7 +292,7 @@ class ChainNode {
       final mine = steward == null ? const <int, String>{} : (head.declarations[key] ?? const <int, String>{});
       _holdingProofs(head, mine, tick);
       _anchor(head, tick);
-      final needsProof = head.corpusRoot.isNotEmpty && head.declarations.isNotEmpty;
+      final needsProof = head.corpusRoot.isNotEmpty && head.stewards > 0;
       Map<String, Object?> proof = const {};
       if (needsProof) {
         if (mine.isEmpty) return;
@@ -322,7 +332,7 @@ class ChainNode {
     final out = <Tx>[];
     var size = 4096;
     for (final t in txs) {
-      final n = utf8.encode(jsonEncode(t.toJson())).length;
+      final n = utf8.encode(jsonEncode(t.toJson())).length + 70; // and its trace root
       if (size + n > maxBlockBytes) break;
       out.add(t);
       size += n;
@@ -337,9 +347,7 @@ class ChainNode {
     if (body == null) return;
     for (final e in head.circles.entries) {
       if (!e.value.mayAnchor(key) || tick - e.value.anchoredAt < params.anchorTicks) continue;
-      final waiting = _mempool.values.any(
-        (t) => t.type == TxType.anchor && t.from == key && t.body['circle'] == e.key,
-      );
+      final waiting = _mempool.values.any((t) => t.type == TxType.anchor && t.from == key && t.body['circle'] == e.key);
       if (waiting) continue;
       final b = body(e.key);
       if (b != null) submit(TxType.anchor, {...b, 'circle': e.key});
@@ -375,13 +383,7 @@ class ChainNode {
 
   // ---- Network ----
 
-  void _send(String to, Map<String, Object?> m) {
-    final body = utf8.encode(jsonEncode(m));
-    final bytes = Uint8List(body.length + 1)
-      ..[0] = _tag
-      ..setRange(1, body.length + 1, body);
-    unawaited(link.send(to, bytes, from: address));
-  }
+  void _send(String to, Map<String, Object?> m) => unawaited(link.send(to, encodeChainMessage(m), from: address));
 
   void _broadcast(Map<String, Object?> m, {String? except}) {
     for (final p in peers) {
@@ -389,24 +391,130 @@ class ChainNode {
     }
   }
 
-  void _onInbound(Inbound m) {
-    peers.add(m.from);
-    final Map msg;
+  // ---- Light clients ----
+
+  /// Peers that follow headers only.
+  final lightPeers = <String>{};
+  final _proven = <String>{};
+
+  void _broadcastBlock(Block b, {String? except}) {
+    for (final p in peers) {
+      if (p == except) continue;
+      _send(p, lightPeers.contains(p) ? {'t': 'header', 'h': Header.of(b).toJson()} : {'t': 'block', 'b': b.toJson()});
+    }
+  }
+
+  /// Shows everyone why [b] is wrong, when a fraud proof can show it.
+  Future<void> _proveFraud(_Entry parent, Block b) async {
+    if (!_proven.add(b.hash)) return;
+    final parentHeader = parent.block == null ? null : Header.of(parent.block!);
+    final proof = await FraudProof.build(parent.state, parentHeader, b);
+    if (proof == null) return;
+    log?.call('fraud proof for ${b.height} ${_short(b.hash)}');
+    for (final p in peers) {
+      _sendLarge(p, {'t': 'fraud', 'f': proof.json});
+    }
+  }
+
+  /// Passes on to light clients a fraud proof this node has not seen,
+  /// once it holds.
+  Future<void> _relayFraud(String from, Map msg) async {
+    final proof = FraudProof((msg['f'] as Map).cast<String, Object?>());
+    if (!_proven.add(proof.blockHash)) return;
     try {
-      msg = jsonDecode(utf8.decode(Uint8List.sublistView(m.bytes, 1))) as Map;
-    } catch (_) {
+      await proof.verify(params, genesisRoot: _genesisRoot);
+    } on Object {
       return;
     }
+    for (final p in lightPeers) {
+      if (p != from) _sendLarge(p, {'t': 'fraud', 'f': proof.json});
+    }
+  }
+
+  late final String _genesisRoot = _entries['']!.state.rootHex;
+
+  /// The state after block [at] as it was committed (head '').
+  ChainState? _committed(String at) => _entries[at]?.state.copy()?..head = '';
+
+  void _answerEntry(String to, Map msg) {
+    final at = msg['at'] as String? ?? '', ns = msg['ns'] as String? ?? '';
+    final state = _committed(at);
+    if (state == null || !ChainState.namespaces.contains(ns)) return;
+    final entries = state.entries(ns);
+    final tree = SmtTree(entries);
+    final keys = [for (final k in msg['keys'] as List? ?? const []) '$k'].take(32);
+    _sendLarge(to, {
+      't': 'entry',
+      'id': msg['id'],
+      'at': at,
+      'ns': ns,
+      'roots': [for (final r in state.namespaceRoots()) toHex(r)],
+      'values': {for (final k in keys) k: entries[k]},
+      'proofs': [for (final k in keys) tree.prove(k).toJson()],
+    });
+  }
+
+  void _answerSnapshot(String to, Map msg) {
+    final at = msg['at'] as String? ?? '', ns = msg['ns'] as String? ?? '';
+    final state = _committed(at);
+    if (state == null || !ChainState.namespaces.contains(ns)) return;
+    final entries = state.entries(ns);
+    final keys = entries.keys.toList()..sort();
+    final from = msg['from'] as int? ?? 0;
+    final page = <String, String>{};
+    var size = 0, i = from;
+    for (; i < keys.length && size < 16 * 1024; i++) {
+      page[keys[i]] = entries[keys[i]]!;
+      size += keys[i].length + entries[keys[i]]!.length;
+    }
+    _sendLarge(to, {
+      't': 'snapshot',
+      'id': msg['id'],
+      'at': at,
+      'ns': ns,
+      'from': from,
+      'next': i < keys.length ? i : null,
+      'entries': page,
+      'roots': [for (final r in state.namespaceRoots()) toHex(r)],
+    });
+  }
+
+  void _onInbound(Inbound m) {
+    final Map? whole = _parts.add(m);
+    if (whole == null) return;
+    _onMessage(m.from, whole);
+  }
+
+  final _parts = Reassembly();
+
+  void _sendLarge(String to, Map<String, Object?> m) {
+    for (final part in Reassembly.split(m)) {
+      _send(to, part);
+    }
+  }
+
+  void _onMessage(String from, Map msg) {
+    if (msg['t'] == 'get' && msg['headers'] == true) lightPeers.add(from);
+    peers.add(from);
     switch (msg['t']) {
       case 'block':
-        unawaited(_accept(Block.fromJson(msg['b'] as Map), m.from));
+        unawaited(_accept(Block.fromJson(msg['b'] as Map), from));
       case 'tx':
-        _addTx(Tx.fromJson(msg['tx'] as Map), m.from);
+        _addTx(Tx.fromJson(msg['tx'] as Map), from);
       case 'get':
         final have = [for (final h in msg['have'] as List? ?? const []) '$h'];
         for (final b in chainFrom(_after(have)).take(64)) {
-          _send(m.from, {'t': 'block', 'b': b.toJson()});
+          _send(
+            from,
+            msg['headers'] == true ? {'t': 'header', 'h': Header.of(b).toJson()} : {'t': 'block', 'b': b.toJson()},
+          );
         }
+      case 'fraud':
+        unawaited(_relayFraud(from, msg));
+      case 'entry' when msg['keys'] != null:
+        _answerEntry(from, msg);
+      case 'snapshot' when msg['entries'] == null:
+        _answerSnapshot(from, msg);
     }
   }
 }

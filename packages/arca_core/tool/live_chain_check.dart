@@ -4,16 +4,21 @@
 //
 //   dart run tool/live_chain_check.dart <data dir> <minutes> <file>...
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:arca_core/arca_core.dart';
+import 'package:arca_core/src/chain/block.dart';
 import 'package:arca_core/src/chain/circle_log.dart';
 import 'package:arca_core/src/chain/corpus.dart';
+import 'package:arca_core/src/chain/fraud.dart';
+import 'package:arca_core/src/chain/light.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/node.dart';
 import 'package:arca_core/src/chain/params.dart';
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
+import 'package:arca_core/src/chain/wire.dart';
 
 /// Testnet rules with partitions of 512 KB and one-minute days, so a few
 /// small files make three partitions and a run shows several days.
@@ -136,6 +141,31 @@ Future<void> main(List<String> args) async {
   for (final n in nodes) {
     n.start();
   }
+  // A phone: a second profile on c's device, with its own I2P address,
+  // running a light client that follows a and b.
+  Set<String> ids(Map s) => {for (final p in s['profiles'] as List) (p as Map)['id'] as String};
+  final before = ids(await cores[2].handle('state', {}));
+  final lightId = ids(await cores[2].handle('create', {'name': 'phone'})).difference(before).single;
+  await cores[2].handle('stayOnline', {'id': lightId, 'on': true});
+  String? lightAddress;
+  for (var i = 0; i < 180 && lightAddress == null; i++) {
+    lightAddress = cores[2].net.addressOf(lightId);
+    if (lightAddress == null) await Future<void>.delayed(const Duration(seconds: 1));
+  }
+  if (lightAddress == null) {
+    say('FAILED: the phone\'s address did not come up');
+    exit(1);
+  }
+  final light = LightClient(
+    params: live,
+    genesisRoot: genesis.rootHex,
+    genesisTick: genesis.genesisTick,
+    address: lightAddress,
+    link: cores[2].net.backend.link,
+    peers: [addresses[0], addresses[1]],
+  )..log = (m) => logs.writeln('${DateTime.now().difference(t0).inSeconds}s phone: $m');
+  light.start();
+  say('phone up at ${lightAddress.substring(0, 8)}, following a and b');
   for (var i = 0; i < 3; i++) {
     nodes[i].submit(TxType.declare, {
       'circle': 'commons',
@@ -149,6 +179,7 @@ Future<void> main(List<String> args) async {
       [
         for (var i = 0; i < 3; i++)
           '${'abc'[i]}: h${nodes[i].state.height} d${nodes[i].state.day} ${nodes[i].headHash.isEmpty ? '-' : nodes[i].headHash.substring(0, 6)}',
+        'phone: h${light.height} ${light.headHash.isEmpty ? '-' : light.headHash.substring(0, 6)}',
       ].join('  '),
     );
   }
@@ -175,7 +206,61 @@ Future<void> main(List<String> args) async {
   say(
     'commons anchored at day ${s.dayOf(s.circles['commons']!.anchoredAt)}, log head ${s.circles['commons']!.logHead == log.head ? 'matches' : 'DIFFERS'}',
   );
+
+  // The phone: same head, a proven read, and a bad block dropped.
+  for (var i = 0; i < 60 && light.headHash != nodes[0].headHash; i++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+  final phoneFollows = light.headHash == nodes[0].headHash;
+  say('phone head ${phoneFollows ? 'matches' : 'DIFFERS'} (height ${light.height})');
+  var phoneReads = false;
+  try {
+    final sw = Stopwatch()..start();
+    final read = await light.read('circles', ['commons']);
+    final pool = CircleState.fromJson(jsonDecode(read['commons']!.value!) as Map).pool;
+    phoneReads = pool == s.circles['commons']!.pool;
+    say('phone read the pool with a proof in ${sw.elapsedMilliseconds} ms: ${phoneReads ? 'matches' : 'DIFFERS'}');
+  } on Object catch (e) {
+    say('phone could not read the pool: $e');
+  }
+  // c turns bad: a block without a mining proof, claiming any state.
+  final bad = Block(
+    height: s.height + 1,
+    prev: nodes[0].headHash,
+    tick: nodes[0].currentTick,
+    producer: nodes[2].key,
+    txs: const [],
+    txRoot: Block.txsRoot(const []),
+    stateRoot: 'ab' * 32,
+    corpusRoot: s.corpusRoot,
+    proof: const {},
+    sig: '',
+    target: s.target,
+    traceRoot: Block.traceRootOf([fromHex('ab' * 32)]),
+    trace: ['ab' * 32],
+  ).signedBy(keys[2]);
+  final link = cores[2].net.backend.link;
+  await link.send(lightAddress, encodeChainMessage({'t': 'header', 'h': Header.of(bad).toJson()}), from: addresses[2]);
+  for (var i = 0; i < 60 && light.headHash != bad.hash; i++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+  final took = light.headHash == bad.hash;
+  final sw = Stopwatch()..start();
+  await link.send(addresses[0], encodeChainMessage({'t': 'block', 'b': bad.toJson()}), from: addresses[2]);
+  for (var i = 0; i < 120 && !light.rejected.contains(bad.hash); i++) {
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+  final dropped = light.rejected.contains(bad.hash) && light.headHash != bad.hash;
+  say(
+    'bad block: phone ${took ? 'took it' : 'never took it'}, '
+    '${dropped ? 'dropped it on a\'s fraud proof after ${sw.elapsedMilliseconds} ms' : 'did NOT drop it'}',
+  );
+  await light.stop();
+
   final ok =
+      phoneFollows &&
+      phoneReads &&
+      dropped &&
       s.circles['commons']!.logHead == log.head &&
       heads.length == 1 &&
       roots.length == 1 &&

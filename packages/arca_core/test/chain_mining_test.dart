@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:arca_core/arca_core.dart';
 import 'package:arca_core/src/chain/block.dart';
 import 'package:arca_core/src/chain/corpus.dart';
+import 'package:arca_core/src/chain/fraud.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/params.dart';
 import 'package:arca_core/src/chain/state.dart';
@@ -147,5 +148,41 @@ void main() {
       throwsA(isA<ChainError>()),
     );
     await state.copy().apply(Tx.sign(stewardKey, TxType.holdingProof, 0, {'day': 1, 'proof': good.toJson()}));
+  });
+
+  test('a block with a forged mining proof is refused, and a fraud proof shows it to light clients', () async {
+    final state = genesis();
+    await steward(stewardKey).pack(0);
+    final b1 = await Block.produce(state, faucet, [
+      Tx.sign(stewardKey, TxType.declare, 0, {
+        'circle': 'commons',
+        'partitions': [0],
+      }),
+    ], tick: 1);
+    final s1 = await b1.applyTo(state);
+    final honest = await mine(s1, stewardKey, 2);
+    // Bytes made up to look like a slice: the quality is cheap to fake,
+    // only the memory-hard check catches it.
+    final forged = {...honest.proof, 'packed': toHex(List.filled(ChainParams.sliceBytes, 7))};
+    final bad = Block(
+      height: honest.height,
+      prev: honest.prev,
+      tick: honest.tick,
+      producer: honest.producer,
+      txs: honest.txs,
+      txRoot: honest.txRoot,
+      stateRoot: honest.stateRoot,
+      corpusRoot: honest.corpusRoot,
+      proof: forged,
+      sig: '',
+      target: honest.target,
+      traceRoot: honest.traceRoot,
+      trace: honest.trace,
+    ).signedBy(stewardKey);
+    expect(bad.quality, lessThan(bad.target), reason: 'a light client alone would take it');
+    await expectLater(bad.applyTo(s1), throwsA(predicate((e) => '$e'.contains('bad mining proof'))));
+    final proof = (await FraudProof.build(s1, Header.of(b1), bad))!;
+    expect(proof.json['step'], 0);
+    await proof.verify(p, genesisRoot: state.rootHex);
   });
 }

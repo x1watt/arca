@@ -417,10 +417,12 @@ Built so far (milestones 1 to 5):
     - `claim`, a member's payout from its circle's pool;
     - `burn`, optionally for a collection;
     - `declare` and `undeclare` of partitions for a circle.
-  - The state holds balances, nonces, circles with their pools and latest anchors, declarations, and burned and issued totals. It is committed as one Merkle root over its sorted entries.
+  - The state holds balances, nonces, circles with their pools and latest anchors, collections, burns, standing, passes, sync scores, declarations and the scalars (height, tick, target, day, totals). It is kept as twelve namespaces of key and value entries (`chain/state_map.dart`); each namespace is a compact sparse Merkle tree (`chain/smt.dart`) keyed by SHA-256 of the entry's key, and the state root is the Merkle root over the twelve namespace roots. Any entry, or its absence, is proven with about log2(n) hashes, and a verifier holding a few proven entries can change them and compute the new root. A namespace keeps its root until something touches it.
 - **Blocks** (`chain/block.dart`).
-  - The header commits to the previous block, the clock tick, the transactions root, the resulting state root, the corpus root and the producer's proof, and is signed by the producer.
-  - A node applies a block to a copy of its state and accepts it only if every transaction is valid and the root it computes is the one signed. A wrong state is a rejected block.
+  - The header commits to the previous block, the clock tick, the target the mining proof had to meet, the transactions root and count, the resulting state root, the trace root, the corpus root and the producer's proof, and is signed by the producer.
+  - The trace is the state root after the block's prelude (closing a day, the mining proof, the new target) and after each transaction. The block carries it; the header commits to its Merkle root.
+  - A node applies a block to a copy of its state and accepts it only if every transaction is valid and every step's root is the one in the trace. A wrong state is a rejected block.
+  - A block's state commits `head` as '' (its own hash is not known yet); the next block starts from it with `head` set to that block's hash.
 
 - **Clock and mining** (`chain/mining.dart`, milestone 3).
   - Time is cut into ticks of wall time (1 s on the testnet). A tick's challenge is SHA-256 of the previous block and the tick, so a producer cannot grind it by changing its own block.
@@ -465,7 +467,19 @@ Built so far (milestones 1 to 5):
   - A day later the chain closes the pass: half is burned, half goes to the servers by bytes delivered (back to the reader when nobody served). The burned half counts towards the interest of the collection the pass named, unless the reader is a member, so buying passes on your own files always loses half and raises nothing.
   - **Sync score**, per circle and member, recomputed as each day closes: the size of what it proved keeping for the circle, each partition weighted by its rarity (ten copies' weight shared among its copies), plus half of each whole collection of the circle it kept at ten copies' weight; yesterday's score loses a seventh. A missed proof resets it. It decides member access and serving priority, and is what the payout policy's stewards' share follows.
 
-Next: fraud proofs and light clients (the rest of 6), and the wallet (7).
+- **Fraud proofs** (`chain/fraud.dart`, milestone 6).
+  - A full node that refuses a block shows why to everyone: it finds the first step of the trace it disagrees with and sends a proof of that step. The proof carries the headers of the block and its parent, the namespace roots before the step, the transaction and its path (for a transaction step), the entries the step touches, each proven present or absent, and the trace entries around the step with their paths. The node learns what a step touches by running it on maps that record every key used.
+  - The verifier builds a state from those entries alone, on maps that refuse any key the proof did not carry, runs the step and computes the root after it. The block is wrong when the step breaks a rule (a forged mining proof, an overspend, a wrong target) or its root differs from the trace. A proof that leaves out an entry the step needs, alters a value, or points at a right step does not hold.
+  - Sizes: a transfer's proof is about 5 KB. A day's settlement goes through every steward, so its proof carries those namespaces whole: about 1.5 KB per steward, 600 KB with 400 stewards, sent in parts. That is fine for the testnet and too much for phones at mainnet size; settling a day in many small steps, each provable alone, is an open problem.
+  - Not covered: a producer who never publishes a block's transactions. Full nodes refuse such a block, but have nothing to show a light client (the data availability problem).
+- **Light clients** (`chain/light.dart`): what a phone runs.
+  - It keeps headers only. For each it checks what is cheap: the signature, the parent and height, that the clock moves forward and is not in the future, and that the mining proof's quality is under the header's target. The memory-hard part of that proof is left to fraud proofs, since checking it costs an Argon2id per block.
+  - It follows the chain with the most work. A valid fraud proof from any full node drops the block and every block built on it, for good; one honest full node is enough. A header older than the fraud window with no proof against it is final.
+  - It reads state entries with proofs against a header's state root (`entry` requests), and can fetch a whole snapshot, namespace by namespace, each checked against its root: a new full node starts from a recent snapshot instead of replaying history.
+  - Full nodes answer light clients with headers instead of whole blocks, answer entry and snapshot requests from the states they keep, and pass on fraud proofs that hold. Messages too big for one datagram travel in parts (`chain/wire.dart`).
+  - Over live I2P (`tool/live_chain_check.dart`), a phone profile on its own I2P address followed two full nodes to the same head, read its circle's pool with a proof in 107 ms, took a bad block it heard of first and dropped it one second after a full node's fraud proof arrived.
+
+Next: the wallet and stewardship screens (7).
 
 ## 11. Open questions
 

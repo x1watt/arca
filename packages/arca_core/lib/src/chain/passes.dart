@@ -52,6 +52,15 @@ class PassState {
     'delivered': delivered,
   };
 
+  factory PassState.fromJson(Map m) => PassState(
+    reader: m['reader'] as String,
+    circle: m['circle'] as String,
+    collection: m['collection'] as String,
+    price: m['price'] as int,
+    expires: m['expires'] as int,
+    delivered: (m['delivered'] as Map).cast<String, int>(),
+  );
+
   PassState copy() => PassState(
     reader: reader,
     circle: circle,
@@ -96,7 +105,7 @@ class Receipt {
 }
 
 /// Closes every pass whose settlement window ended by [tick]: burns half,
-/// pays the servers the other half by bytes. Called in every block.
+/// pays the servers the other half by bytes. Called as each day starts.
 void closePasses(ChainState s, int tick) {
   final done = [
     for (final e in s.passes.entries)

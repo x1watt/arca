@@ -27,6 +27,7 @@ ChainState library({
 
 /// [steward] keeps [partitions] for [circle] from day 0 on.
 void keep(ChainState s, String steward, String circle, List<int> partitions) {
+  if (!s.declarations.containsKey(steward)) s.stewards++;
   for (final q in partitions) {
     (s.declarations[steward] ??= {})[q] = circle;
     (s.declaredOn[steward] ??= {})[q] = 0;

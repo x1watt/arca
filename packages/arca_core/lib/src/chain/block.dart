@@ -1,9 +1,18 @@
 // Blocks (whitepaper, section 6). The header commits to the previous block,
-// the clock tick, the transactions, the state that results from them, the
-// corpus and the producer's mining proof. A node applies a block to a copy
-// of its state and accepts it only if the mining proof holds, every
-// transaction is valid and the resulting root is the one the producer
+// the clock tick, the target the mining proof had to meet, the
+// transactions, the state that results from them, the trace of states on
+// the way, the corpus and the producer's mining proof. A node applies a
+// block to a copy of its state and accepts it only if the mining proof
+// holds, every transaction is valid and every root is the one the producer
 // signed: a wrong state is a rejected block.
+//
+// The trace is the state root after the block's prelude (closing a day,
+// the mining proof, the new target) and after each transaction. A light
+// client that holds only headers can be shown one wrong step of it, with
+// the few entries that step touches (fraud.dart).
+//
+// A block's state commits `head` as '' (its own hash is not known yet); the
+// next block starts from it with `head` set to that hash.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -14,7 +23,6 @@ import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
-import 'passes.dart';
 import 'state.dart';
 import 'tx.dart';
 
@@ -30,6 +38,9 @@ class Block {
     required this.corpusRoot,
     required this.proof,
     required this.sig,
+    required this.target,
+    required this.traceRoot,
+    required this.trace,
   });
 
   final int height;
@@ -41,6 +52,15 @@ class Block {
   final String stateRoot;
   final String corpusRoot;
 
+  /// The target the mining proof had to meet (the parent state's), so a
+  /// light client can weigh forks from headers alone.
+  final BigInt target;
+
+  /// The trace: the state root after the prelude and after each
+  /// transaction; the header commits to its Merkle root.
+  final List<String> trace;
+  final String traceRoot;
+
   /// The producer's mining proof: the slice that won this tick (empty while
   /// the chain has no corpus yet).
   final Map<String, Object?> proof;
@@ -48,26 +68,48 @@ class Block {
 
   static String txsRoot(List<Tx> txs) => toHex(merkleRoot([for (final t in txs) leafHash(fromHex(t.id))]));
 
-  static Uint8List _headerBytes(
-    int height,
-    String prev,
-    int tick,
-    String producer,
-    String txRoot,
-    String stateRoot,
-    String corpusRoot,
-    Map<String, Object?> proof,
-  ) => Uint8List.fromList(
-    c.sha256
-        .convert(
-          utf8.encode(
-            canonicalJson(['arca-block-v1', height, prev, tick, producer, txRoot, stateRoot, corpusRoot, proof]),
-          ),
-        )
-        .bytes,
-  );
+  static String traceRootOf(List<Uint8List> trace) => toHex(merkleRoot([for (final r in trace) leafHash(r)]));
 
-  String get hash => toHex(_headerBytes(height, prev, tick, producer, txRoot, stateRoot, corpusRoot, proof));
+  /// The signed part of the block: everything but the transactions.
+  Map<String, Object?> get header => {
+    'height': height,
+    'prev': prev,
+    'tick': tick,
+    'producer': producer,
+    'target': target.toRadixString(16),
+    'txRoot': txRoot,
+    'txCount': txs.length,
+    'stateRoot': stateRoot,
+    'traceRoot': traceRoot,
+    'corpusRoot': corpusRoot,
+    'proof': proof,
+  };
+
+  static Uint8List _headerBytes(Map<String, Object?> header) =>
+      Uint8List.fromList(c.sha256.convert(utf8.encode(canonicalJson(['arca-block-v2', header]))).bytes);
+
+  String get hash => toHex(_headerBytes(header));
+
+  /// The hash of a block with these [header] fields.
+  static String hashOf(Map<String, Object?> header) => toHex(_headerBytes(header));
+
+  /// Whether [sig] is the producer's signature over [header].
+  static bool verifyHeader(Map<String, Object?> header, String sig) {
+    try {
+      return schnorrVerify(fromHex(header['producer'] as String), _headerBytes(header), fromHex(sig));
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Whether the producer signed this header.
+  bool get signed {
+    try {
+      return schnorrVerify(fromHex(producer), _headerBytes(header), fromHex(sig));
+    } catch (_) {
+      return false;
+    }
+  }
 
   /// The quality of this block's mining proof (lower is better); the
   /// largest value for a block without one. Breaks ties between forks.
@@ -77,23 +119,15 @@ class Block {
     return proofQuality(mineChallenge(prev, tick), p.steward, p.packed);
   }
 
-  /// The state after [txs] on top of [state] at [tick] with mining [proof];
-  /// with [strict] a bad transaction fails the whole block, otherwise it is
-  /// left out (when producing). Returns the state and the included txs.
-  static Future<(ChainState, List<Tx>)> _transition(
-    ChainState state,
-    int tick,
-    String producer,
-    Map<String, Object?> proof,
-    List<Tx> txs, {
-    required bool strict,
-  }) async {
+  /// The block's first step on top of [state]: closes a day when one
+  /// ended, checks the mining proof and sets the next target. Throws
+  /// [ChainError] when the proof is wrong.
+  static Future<ChainState> prelude(ChainState state, int tick, String producer, Map<String, Object?> proof) async {
     final params = state.params;
     if (tick <= state.tick && state.height > 0) throw const ChainError('the clock went backwards');
     final next = state.copy();
     next.startDay(state.dayOf(tick));
-    closePasses(next, tick);
-    if (state.corpusRoot.isNotEmpty && next.declarations.isNotEmpty) {
+    if (state.corpusRoot.isNotEmpty && next.stewards > 0) {
       // Mining proof: a slice of a partition this producer declared, for
       // the circle it names, below the target. (Before anyone declares, at
       // the very start, blocks carry no proof and add almost no work, so
@@ -119,30 +153,45 @@ class Block {
         }
       }
     }
-    next.tick = tick;
+    next
+      ..tick = tick
+      ..height = state.height + 1
+      ..head = '';
+    return next;
+  }
+
+  /// The state after the prelude and [txs]; with [strict] a bad transaction
+  /// fails the whole block, otherwise it is left out (when producing).
+  /// Returns the state, the included transactions and the trace.
+  static Future<(ChainState, List<Tx>, List<Uint8List>)> _transition(
+    ChainState state,
+    int tick,
+    String producer,
+    Map<String, Object?> proof,
+    List<Tx> txs, {
+    required bool strict,
+  }) async {
+    var result = await prelude(state, tick, producer, proof);
+    final trace = [result.root()];
     final included = <Tx>[];
-    var result = next;
     for (final t in txs) {
       if (strict) {
         await result.apply(t);
-        included.add(t);
-        continue;
-      }
-      // Apply to a copy and keep it: each transaction is checked once
-      // (a holding proof costs an Argon2id).
-      final trial = result.copy();
-      try {
-        await trial.apply(t);
+      } else {
+        // Apply to a copy and keep it: each transaction is checked once
+        // (a holding proof costs an Argon2id).
+        final trial = result.copy();
+        try {
+          await trial.apply(t);
+        } on ChainError {
+          continue;
+        }
         result = trial;
-        included.add(t);
-      } on ChainError {
-        continue;
       }
+      included.add(t);
+      trace.add(result.root());
     }
-    result
-      ..height = state.height + 1
-      ..head = '';
-    return (result, included);
+    return (result, included, trace);
   }
 
   /// Builds and signs the next block on [state]. Invalid transactions are
@@ -155,32 +204,41 @@ class Block {
     Map<String, Object?> proof = const {},
   }) async {
     final producer = toHex(publicKeyOf(secretKey));
-    final (next, included) = await _transition(state, tick, producer, proof, txs, strict: false);
-    final txRoot = txsRoot(included);
-    final stateRoot = next.rootHex;
-    final header = _headerBytes(
-      state.height + 1,
-      state.head,
-      tick,
-      producer,
-      txRoot,
-      stateRoot,
-      state.corpusRoot,
-      proof,
-    );
-    return Block(
+    final (next, included, trace) = await _transition(state, tick, producer, proof, txs, strict: false);
+    final unsigned = Block(
       height: state.height + 1,
       prev: state.head,
       tick: tick,
       producer: producer,
       txs: included,
-      txRoot: txRoot,
-      stateRoot: stateRoot,
+      txRoot: txsRoot(included),
+      stateRoot: toHex(trace.last),
       corpusRoot: state.corpusRoot,
       proof: proof,
-      sig: toHex(schnorrSign(secretKey, header)),
+      sig: '',
+      target: state.target,
+      traceRoot: traceRootOf(trace),
+      trace: [for (final r in trace) toHex(r)],
     );
+    return unsigned.signedBy(secretKey);
   }
+
+  /// This block signed by [secretKey] (tests build wrong blocks with it).
+  Block signedBy(List<int> secretKey) => Block(
+    height: height,
+    prev: prev,
+    tick: tick,
+    producer: producer,
+    txs: txs,
+    txRoot: txRoot,
+    stateRoot: stateRoot,
+    corpusRoot: corpusRoot,
+    proof: proof,
+    sig: toHex(schnorrSign(secretKey, _headerBytes(header))),
+    target: target,
+    traceRoot: traceRoot,
+    trace: trace,
+  );
 
   /// Applies this block to [state] and returns the new state, or throws
   /// [ChainError] naming the broken rule. [state] is never changed.
@@ -188,11 +246,17 @@ class Block {
     if (height != state.height + 1) throw ChainError('height $height after ${state.height}');
     if (prev != state.head) throw const ChainError('does not follow the current head');
     if (corpusRoot != state.corpusRoot) throw const ChainError('a different corpus');
-    final header = _headerBytes(height, prev, tick, producer, txRoot, stateRoot, corpusRoot, proof);
-    if (!schnorrVerify(fromHex(producer), header, fromHex(sig))) throw const ChainError('bad producer signature');
+    if (target != state.target) throw const ChainError('not the target of the chain');
+    if (!signed) throw const ChainError('bad producer signature');
     if (txsRoot(txs) != txRoot) throw const ChainError('transactions do not match the header');
-    final (next, _) = await _transition(state, tick, producer, proof, txs, strict: true);
-    if (next.rootHex != stateRoot) throw const ChainError('the resulting state is not the one signed');
+    if (trace.length != txs.length + 1 || traceRootOf([for (final r in trace) fromHex(r)]) != traceRoot) {
+      throw const ChainError('the trace does not match the header');
+    }
+    final (next, _, mine) = await _transition(state, tick, producer, proof, txs, strict: true);
+    for (var i = 0; i < mine.length; i++) {
+      if (toHex(mine[i]) != trace[i]) throw ChainError('step $i of the trace is wrong');
+    }
+    if (trace.last != stateRoot) throw const ChainError('the resulting state is not the one signed');
     next.head = hash;
     return next;
   }
@@ -208,6 +272,9 @@ class Block {
     'corpusRoot': corpusRoot,
     'proof': proof,
     'sig': sig,
+    'target': target.toRadixString(16),
+    'traceRoot': traceRoot,
+    'trace': trace,
   };
 
   factory Block.fromJson(Map m) => Block(
@@ -221,5 +288,8 @@ class Block {
     corpusRoot: m['corpusRoot'] as String,
     proof: (m['proof'] as Map).cast<String, Object?>(),
     sig: m['sig'] as String,
+    target: BigInt.parse(m['target'] as String, radix: 16),
+    traceRoot: m['traceRoot'] as String,
+    trace: (m['trace'] as List).cast<String>(),
   );
 }

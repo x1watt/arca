@@ -15,6 +15,8 @@ import 'mining.dart';
 import 'params.dart';
 import 'passes.dart';
 import 'rewards.dart';
+import 'smt.dart';
+import 'state_map.dart';
 import 'tx.dart';
 
 class CircleState {
@@ -65,6 +67,23 @@ class CircleState {
     'memberScore': memberScore,
   };
 
+  factory CircleState.fromJson(Map m) =>
+      CircleState(
+          admin: m['admin'] as String,
+          name: m['name'] as String,
+          pool: m['pool'] as int,
+          moderators: (m['moderators'] as List).cast<String>().toList(),
+        )
+        ..logHead = m['logHead'] as String
+        ..dataRoot = m['dataRoot'] as String
+        ..memberRoot = m['memberRoot'] as String
+        ..payoutRoot = m['payoutRoot'] as String
+        ..anchoredAt = m['anchoredAt'] as int
+        ..claimed.addAll((m['claimed'] as Map).cast<String, int>())
+        ..passPrice = m['passPrice'] as int
+        ..freeAllowance = m['freeAllowance'] as int
+        ..memberScore = m['memberScore'] as int;
+
   CircleState copy() => CircleState(admin: admin, name: name, pool: pool, moderators: [...moderators])
     ..logHead = logHead
     ..dataRoot = dataRoot
@@ -88,6 +107,12 @@ class CollectionState {
   final int seed;
 
   Map<String, Object?> toJson() => {'circle': circle, 'partitions': partitions, 'seed': seed};
+
+  factory CollectionState.fromJson(Map m) => CollectionState(
+    circle: m['circle'] as String,
+    partitions: (m['partitions'] as List).cast<int>(),
+    seed: m['seed'] as int,
+  );
 }
 
 /// A rejected transaction or block, with the rule it broke.
@@ -102,26 +127,26 @@ class ChainState {
   ChainState(this.params);
 
   final ChainParams params;
-  final balances = <String, int>{};
-  final nonces = <String, int>{};
-  final circles = <String, CircleState>{};
+  final balances = StateMap<int>('balances');
+  final nonces = StateMap<int>('nonces');
+  final circles = StateMap<CircleState>('circles');
 
-  final collections = <String, CollectionState>{};
+  final collections = StateMap<CollectionState>('collections');
 
   /// Collection to (day to marcas burned for it by non-members).
-  final burnsFor = <String, Map<int, int>>{};
+  final burnsFor = StateMap<Map<int, int>>('burns');
 
   /// Steward key to standing, recomputed as each day closes.
-  final standing = <String, int>{};
+  final standing = StateMap<int>('standing');
 
   /// Open passes by the id of the transaction that bought them.
-  final passes = <String, PassState>{};
+  final passes = StateMap<PassState>('passes');
 
   /// Circle to (member key to sync score), updated as each day closes.
-  final syncScores = <String, Map<String, int>>{};
+  final syncScores = StateMap<Map<String, int>>('sync');
 
   /// Steward key to (partition to the circle the keeping is for).
-  final declarations = <String, Map<int, String>>{};
+  final declarations = StateMap<Map<int, String>>('declarations');
   int height = 0;
   int tick = 0;
   String head = '';
@@ -144,12 +169,16 @@ class ChainState {
   /// The tick of genesis: days count from here.
   int genesisTick = 0;
 
+  /// How many stewards have declarations (kept so a block need not go
+  /// through them all to know whether mining needs a proof).
+  int stewards = 0;
+
   int dayOf(int tick) => tick < genesisTick ? 0 : (tick - genesisTick) ~/ params.dayTicks;
 
   /// Steward to (partition to the day it was declared), and to the day of
   /// its last holding proof.
-  final declaredOn = <String, Map<int, int>>{};
-  final provenOn = <String, Map<int, int>>{};
+  final declaredOn = StateMap<Map<int, int>>('declaredOn');
+  final provenOn = StateMap<Map<int, int>>('provenOn');
 
   int balanceOf(String key) => balances[key] ?? 0;
 
@@ -180,31 +209,166 @@ class ChainState {
   }
 
   ChainState copy() {
-    final s = ChainState(params)
-      ..height = height
-      ..tick = tick
-      ..head = head
-      ..burned = burned
-      ..issued = issued
-      ..corpusRoot = corpusRoot
-      ..partitionSizes = [...partitionSizes]
-      ..target = target
-      ..day = day
-      ..beacon = beacon
-      ..genesisTick = genesisTick;
-    declaredOn.forEach((k, v) => s.declaredOn[k] = Map.of(v));
-    provenOn.forEach((k, v) => s.provenOn[k] = Map.of(v));
-    s.balances.addAll(balances);
-    s.nonces.addAll(nonces);
-    circles.forEach((k, v) => s.circles[k] = v.copy());
-    s.collections.addAll(collections); // never changed in place
-    burnsFor.forEach((k, v) => s.burnsFor[k] = Map.of(v));
-    s.standing.addAll(standing);
-    passes.forEach((k, v) => s.passes[k] = v.copy());
-    syncScores.forEach((k, v) => s.syncScores[k] = Map.of(v));
-    declarations.forEach((k, v) => s.declarations[k] = Map.of(v));
+    final s = ChainState(params)..meta = meta;
+    balances.copyInto(s.balances, (v) => v);
+    nonces.copyInto(s.nonces, (v) => v);
+    circles.copyInto(s.circles, (v) => v.copy());
+    collections.copyInto(s.collections, (v) => v); // never changed in place
+    burnsFor.copyInto(s.burnsFor, Map.of);
+    standing.copyInto(s.standing, (v) => v);
+    passes.copyInto(s.passes, (v) => v.copy());
+    syncScores.copyInto(s.syncScores, Map.of);
+    declarations.copyInto(s.declarations, Map.of);
+    declaredOn.copyInto(s.declaredOn, Map.of);
+    provenOn.copyInto(s.provenOn, Map.of);
     return s;
   }
+
+  // ---- The commitment: one sparse Merkle tree per namespace ----
+
+  /// Namespaces in commitment order.
+  static const namespaces = [
+    'meta',
+    'balances',
+    'nonces',
+    'circles',
+    'collections',
+    'burns',
+    'standing',
+    'passes',
+    'sync',
+    'declarations',
+    'declaredOn',
+    'provenOn',
+  ];
+
+  /// The scalar fields, as the one entry of the 'meta' namespace.
+  Map<String, Object?> get meta => {
+    'height': height,
+    'tick': tick,
+    'head': head,
+    'burned': burned,
+    'issued': issued,
+    'corpusRoot': corpusRoot,
+    'partitionSizes': partitionSizes,
+    'target': target.toRadixString(16),
+    'day': day,
+    'beacon': beacon,
+    'genesisTick': genesisTick,
+    'stewards': stewards,
+  };
+
+  set meta(Map<String, Object?> m) {
+    height = m['height'] as int;
+    tick = m['tick'] as int;
+    head = m['head'] as String;
+    burned = m['burned'] as int;
+    issued = m['issued'] as int;
+    corpusRoot = m['corpusRoot'] as String;
+    partitionSizes = (m['partitionSizes'] as List).cast<int>().toList();
+    target = BigInt.parse(m['target'] as String, radix: 16);
+    day = m['day'] as int;
+    beacon = m['beacon'] as String;
+    genesisTick = m['genesisTick'] as int;
+    stewards = m['stewards'] as int;
+  }
+
+  static String _intMap(Map<int, Object?> m) => canonicalJson({for (final e in m.entries) '${e.key}': e.value});
+  static Map<int, V> _intMapOf<V>(String v) => {
+    for (final e in (jsonDecode(v) as Map).entries) int.parse(e.key as String): e.value as V,
+  };
+
+  /// Every map with its encoder and decoder, by namespace.
+  List<(StateMap, String Function(Object?), Object Function(String))> get _maps => [
+    (balances, (v) => '$v', int.parse),
+    (nonces, (v) => '$v', int.parse),
+    (circles, (v) => canonicalJson((v as CircleState).toJson()), (v) => CircleState.fromJson(jsonDecode(v) as Map)),
+    (
+      collections,
+      (v) => canonicalJson((v as CollectionState).toJson()),
+      (v) => CollectionState.fromJson(jsonDecode(v) as Map),
+    ),
+    (burnsFor, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
+    (standing, (v) => '$v', int.parse),
+    (passes, (v) => canonicalJson((v as PassState).toJson()), (v) => PassState.fromJson(jsonDecode(v) as Map)),
+    (syncScores, canonicalJson, (v) => (jsonDecode(v) as Map).cast<String, int>()),
+    (declarations, (v) => _intMap(v as Map<int, String>), _intMapOf<String>),
+    (declaredOn, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
+    (provenOn, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
+  ];
+
+  StateMap mapOf(String namespace) => _maps.firstWhere((m) => m.$1.namespace == namespace).$1;
+
+  /// The encoded value of [key] in [namespace], or null when absent.
+  String? encoded(String namespace, String key) {
+    if (namespace == 'meta') return canonicalJson(meta);
+    final (map, encode, _) = _maps.firstWhere((m) => m.$1.namespace == namespace);
+    final v = map.raw[key];
+    return v == null ? null : encode(v);
+  }
+
+  /// All entries of [namespace], encoded.
+  Map<String, String> entries(String namespace) {
+    if (namespace == 'meta') return {'meta': canonicalJson(meta)};
+    final (map, encode, _) = _maps.firstWhere((m) => m.$1.namespace == namespace);
+    return {for (final e in map.raw.entries) e.key: encode(e.value)};
+  }
+
+  /// Sets [key] of [namespace] from its encoded [value] (null removes).
+  void putEncoded(String namespace, String key, String? value) {
+    if (namespace == 'meta') {
+      meta = jsonDecode(value!) as Map<String, Object?>;
+      return;
+    }
+    final (map, _, decode) = _maps.firstWhere((m) => m.$1.namespace == namespace);
+    if (value == null) {
+      map.raw.remove(key);
+    } else {
+      map.raw[key] = decode(value);
+    }
+  }
+
+  /// A state from all its entries (a snapshot).
+  factory ChainState.fromEntries(ChainParams params, Map<String, Map<String, String>> entries) {
+    final s = ChainState(params);
+    for (final ns in namespaces) {
+      entries[ns]?.forEach((k, v) => s.putEncoded(ns, k, v));
+    }
+    return s;
+  }
+
+  /// Every namespace's root, in [namespaces] order.
+  List<Uint8List> namespaceRoots() => [
+    smtRoot({'meta': canonicalJson(meta)}),
+    for (final (map, encode, _) in _maps) map.root(encode),
+  ];
+
+  /// Starts recording which entries the next step touches.
+  void track() {
+    for (final m in _maps) {
+      m.$1.track();
+    }
+  }
+
+  /// What the tracked step touched: namespace to keys, or to null when it
+  /// went through the whole namespace.
+  Map<String, Set<String>?> touched() {
+    final out = <String, Set<String>?>{};
+    for (final (map, _, _) in _maps) {
+      final t = map.touched;
+      if (t == null) continue;
+      if (t.all) {
+        out[map.namespace] = null;
+      } else if (t.keys.isNotEmpty) {
+        out[map.namespace] = t.keys;
+      }
+      map.touched = null;
+    }
+    return out;
+  }
+
+  /// Limits [namespace] to [keys] (a verifier's partial state).
+  void witness(String namespace, Set<String> keys) => mapOf(namespace).witnessed = keys;
 
   /// Applies [tx] or throws [ChainError] and leaves the state as it was
   /// only if the caller works on a copy (blocks do).
@@ -265,15 +429,19 @@ class ChainState {
         final total = b['total'] as int? ?? 0;
         final List<ProofStep> path;
         try {
-          path = [
-            for (final step in b['path'] as List) (fromHex((step as List)[0] as String), step[1] as bool),
-          ];
+          path = [for (final step in b['path'] as List) (fromHex((step as List)[0] as String), step[1] as bool)];
         } catch (_) {
           throw const ChainError('bad proof');
         }
         final leaf = PayoutTable.leaf(id, tx.from, total);
         if (circle.payoutRoot.isEmpty ||
-            !merkleVerifyAt(leaf, b['index'] as int? ?? -1, b['count'] as int? ?? 0, path, fromHex(circle.payoutRoot))) {
+            !merkleVerifyAt(
+              leaf,
+              b['index'] as int? ?? -1,
+              b['count'] as int? ?? 0,
+              path,
+              fromHex(circle.payoutRoot),
+            )) {
           throw const ChainError('not in the circle\'s payout table');
         }
         final owed = total - (circle.claimed[tx.from] ?? 0);
@@ -290,6 +458,7 @@ class ChainState {
         if (partitionSizes.isNotEmpty && parts.any((p) => p >= partitionSizes.length)) {
           throw const ChainError('no such partition');
         }
+        if (!declarations.containsKey(tx.from)) stewards++;
         final mine = declarations.putIfAbsent(tx.from, () => {});
         final since = declaredOn.putIfAbsent(tx.from, () => {});
         for (final p in parts) {
@@ -304,6 +473,7 @@ class ChainState {
           declaredOn[tx.from]?.remove(p);
         }
         if (mine != null && mine.isEmpty) {
+          stewards--;
           declarations.remove(tx.from);
           declaredOn.remove(tx.from);
         }
@@ -339,8 +509,15 @@ class ChainState {
         if (pass == null) throw const ChainError('no such pass, or it is closed');
         if (pass.activeAt(tick)) throw const ChainError('the pass is still active');
         if (pass.delivered.containsKey(tx.from)) throw const ChainError('this server settled already');
-        final receipt = Receipt(pass: id, server: tx.from, bytes: b['bytes'] as int? ?? 0, sig: b['sig'] as String? ?? '');
-        if (receipt.bytes <= 0 || !receipt.verify(pass.reader)) throw const ChainError('not a receipt the reader signed');
+        final receipt = Receipt(
+          pass: id,
+          server: tx.from,
+          bytes: b['bytes'] as int? ?? 0,
+          sig: b['sig'] as String? ?? '',
+        );
+        if (receipt.bytes <= 0 || !receipt.verify(pass.reader)) {
+          throw const ChainError('not a receipt the reader signed');
+        }
         pass.delivered[tx.from] = receipt.bytes;
       case TxType.holdingProof:
         final proof = SliceProof.fromJson(b['proof'] as Map);
@@ -371,6 +548,7 @@ class ChainState {
       final proven = provenOn[steward] ?? const {};
       final missed = declarations[steward]!.keys.any((p) => (since[p] ?? day) < day && proven[p] != day);
       if (missed) {
+        stewards--;
         declarations.remove(steward);
         declaredOn.remove(steward);
         provenOn.remove(steward);
@@ -381,6 +559,7 @@ class ChainState {
       }
     }
     settleDay(this, day);
+    closePasses(this, genesisTick + newDay * params.dayTicks);
     day = newDay;
     beacon = head;
   }
@@ -475,28 +654,11 @@ class ChainState {
     if (balances[from] == 0) balances.remove(from);
   }
 
-  /// The state root: every entry, sorted, as a leaf.
-  Uint8List root() {
-    final entries = <String>[
-      for (final k in (balances.keys.toList()..sort())) 'b:$k:${balances[k]}',
-      for (final k in (nonces.keys.toList()..sort())) 'n:$k:${nonces[k]}',
-      for (final k in (circles.keys.toList()..sort())) 'c:$k:${canonicalJson(circles[k]!.toJson())}',
-      for (final k in (collections.keys.toList()..sort())) 'k:$k:${canonicalJson(collections[k]!.toJson())}',
-      for (final k in (burnsFor.keys.toList()..sort()))
-        'u:$k:${canonicalJson({for (final e in burnsFor[k]!.entries) '${e.key}': e.value})}',
-      for (final k in (standing.keys.toList()..sort())) 'r:$k:${standing[k]}',
-      for (final k in (passes.keys.toList()..sort())) 'q:$k:${canonicalJson(passes[k]!.toJson())}',
-      for (final k in (syncScores.keys.toList()..sort())) 'y:$k:${canonicalJson(syncScores[k])}',
-      for (final k in (declarations.keys.toList()..sort()))
-        'd:$k:${canonicalJson({for (final e in declarations[k]!.entries) '${e.key}': e.value})}',
-      for (final k in (declaredOn.keys.toList()..sort()))
-        's:$k:${canonicalJson({for (final e in declaredOn[k]!.entries) '${e.key}': e.value})}',
-      for (final k in (provenOn.keys.toList()..sort()))
-        'p:$k:${canonicalJson({for (final e in provenOn[k]!.entries) '${e.key}': e.value})}',
-      't:$height:$tick:$burned:$issued:$day:$beacon:$target:$corpusRoot:${partitionSizes.join(',')}:$genesisTick',
-    ];
-    return merkleRoot([for (final e in entries) leafHash(utf8.encode(e))]);
-  }
+  /// The state root: the Merkle root over the namespaces' roots.
+  Uint8List root() => stateRootOf(namespaceRoots());
+
+  static Uint8List stateRootOf(List<Uint8List> namespaceRoots) =>
+      merkleRoot([for (final r in namespaceRoots) leafHash(r)]);
 
   String get rootHex => toHex(root());
 }
