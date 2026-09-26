@@ -121,6 +121,8 @@ void settleDay(ChainState s, int day) {
     ..clear()
     ..addAll({for (final e in standing.entries) e.key: e.value.toInt()});
 
+  _syncScores(s, provers, keptBy);
+
   // Burns older than the window no longer count.
   for (final id in s.burnsFor.keys.toList()) {
     s.burnsFor[id]!.removeWhere((d, _) => d <= day + 1 - ChainParams.interestWindowDays);
@@ -133,4 +135,44 @@ void _pay(ChainState s, Map<String, bool> live, String circle, int amount) {
   if (c == null || amount <= 0 || live[circle] != true) return;
   c.pool += amount;
   s.issued += amount;
+}
+
+/// Sync scores (section 9): per circle, per member, the bytes it proved
+/// keeping for the circle today, each partition weighted by how rare it is
+/// (ten copies' weight shared among its copies), plus, for every collection
+/// of the circle it kept whole, half the collection's size at ten copies'
+/// weight. Units are chunks times copies. Yesterday's score loses a
+/// seventh, so the score follows what a member keeps now.
+void _syncScores(ChainState s, Map<int, List<String>> provers, Map<String, List<String>> keptBy) {
+  final today = <String, Map<String, int>>{};
+  for (final e in provers.entries) {
+    final size = e.key < s.partitionSizes.length ? s.partitionSizes[e.key] : 0;
+    final weight = size * ChainParams.targetCopies ~/ e.value.length;
+    for (final steward in e.value) {
+      final circle = s.declarations[steward]![e.key]!;
+      final m = today.putIfAbsent(circle, () => {});
+      m[steward] = (m[steward] ?? 0) + weight;
+    }
+  }
+  for (final e in keptBy.entries) {
+    final c = s.collections[e.key]!;
+    final size = c.partitions.fold(0, (a, p) => a + (p < s.partitionSizes.length ? s.partitionSizes[p] : 0));
+    for (final steward in e.value) {
+      if (s.declarations[steward]![c.partitions.first] != c.circle) continue;
+      final m = today.putIfAbsent(c.circle, () => {});
+      m[steward] = (m[steward] ?? 0) + size * ChainParams.targetCopies ~/ 2;
+    }
+  }
+  for (final circle in {...s.syncScores.keys, ...today.keys}) {
+    final scores = s.syncScores.putIfAbsent(circle, () => {});
+    for (final k in {...scores.keys, ...?today[circle]?.keys}) {
+      final v = (scores[k] ?? 0) - (scores[k] ?? 0) ~/ ChainParams.syncScoreDecay + (today[circle]?[k] ?? 0);
+      if (v > 0) {
+        scores[k] = v;
+      } else {
+        scores.remove(k);
+      }
+    }
+    if (scores.isEmpty) s.syncScores.remove(circle);
+  }
 }

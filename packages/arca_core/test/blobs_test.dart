@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:arca_core/arca_core.dart';
 import 'package:arca_core/src/transport/blobs.dart';
+import 'package:arca_core/src/transport/reading.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -95,5 +96,94 @@ void main() {
     final r = await b.fetch(otherSha, 50 * 1024, ['liar'], '${tmp.path}/bad.bin');
     expect(r.error, contains('fingerprint'));
     expect(File('${tmp.path}/bad.bin').existsSync(), isFalse);
+  });
+
+  group('serving rules', () {
+    final member = generateSecretKey(), passHolder = generateSecretKey(), stranger = generateSecretKey();
+    final serverKey = generateSecretKey();
+    final pass = 'ab' * 32;
+
+    BlobService server(
+      LoopbackNetwork net,
+      Map<String, String> files, {
+      int allowance = 300 * 1024,
+      int total = 500 * 1024,
+    }) => BlobService(
+      address: 'server',
+      link: net.link(['server']),
+      resolve: (sha) async => files[sha],
+      chunkTimeout: const Duration(milliseconds: 300),
+      rules: ServingRules(
+        serverKey: toHex(publicKeyOf(serverKey)),
+        freeAllowance: allowance,
+        freeTotal: total,
+        receiptSlack: 256 * 1024, // over the 8 chunks a reader has in flight
+        passValid: (reader, p) async => reader == toHex(publicKeyOf(passHolder)) && p == pass,
+        isMember: (reader) => reader == toHex(publicKeyOf(member)),
+      ),
+    );
+
+    test('free readers get their allowance per key, and all of them share a daily cap', () async {
+      final net = LoopbackNetwork();
+      final (small, smallSha) = await randomFile('small.bin', 200 * 1024);
+      final (big, bigSha) = await randomFile('big.bin', 400 * 1024);
+      server(net, {smallSha: small.path, bigSha: big.path});
+      final a = serve(net, 'a', {}), b = serve(net, 'b', {}), c = serve(net, 'c', {});
+      final first = await a.fetch(smallSha, 200 * 1024, ['server'], '${tmp.path}/a1', reader: ReaderSession(stranger));
+      expect(first.ok, isTrue, reason: first.error);
+      final second = await a.fetch(bigSha, 400 * 1024, ['server'], '${tmp.path}/a2', reader: ReaderSession(stranger));
+      expect(second.error, contains('allowance'), reason: 'the same key over its 300 KB');
+      // Another key has its own allowance, until the 500 KB for all free
+      // readers runs out.
+      final other = await b.fetch(
+        smallSha,
+        200 * 1024,
+        ['server'],
+        '${tmp.path}/b1',
+        reader: ReaderSession(generateSecretKey()),
+      );
+      expect(other.ok, isTrue, reason: other.error);
+      final third = await c.fetch(smallSha, 200 * 1024, ['server'], '${tmp.path}/c1');
+      expect(third.error, contains('no more free reading'), reason: 'a reader without a key counts by its address');
+    });
+
+    test('members read beyond the allowance', () async {
+      final net = LoopbackNetwork();
+      final (big, sha) = await randomFile('big.bin', 700 * 1024);
+      server(net, {sha: big.path});
+      final r = await serve(
+        net,
+        'm',
+        {},
+      ).fetch(sha, 700 * 1024, ['server'], '${tmp.path}/m', reader: ReaderSession(member));
+      expect(r.ok, isTrue, reason: r.error);
+    });
+
+    test('a pass holder reads while its receipts keep up; the server keeps the latest to settle', () async {
+      final net = LoopbackNetwork(dropRate: 0.05);
+      final (big, sha) = await randomFile('big.bin', 900 * 1024);
+      final s = server(net, {sha: big.path});
+      final session = ReaderSession(passHolder, pass: pass, receiptEvery: 32 * 1024);
+      final r = await serve(net, 'p', {}).fetch(sha, 900 * 1024, ['server'], '${tmp.path}/p', reader: session);
+      expect(r.ok, isTrue, reason: r.error);
+      expect(session.status['server'], ReaderStatus.pass);
+      // The final receipt travels after the download; wait for it.
+      for (var i = 0; i < 50 && (s.receipts[pass]?.bytes ?? 0) < 900 * 1024; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      final receipt = s.receipts[pass]!;
+      expect(receipt.bytes, 900 * 1024);
+      expect(receipt.server, toHex(publicKeyOf(serverKey)));
+      expect(receipt.verify(toHex(publicKeyOf(passHolder))), isTrue, reason: 'settles on the chain');
+    });
+
+    test('a pass holder that stops signing receipts is stopped', () async {
+      final net = LoopbackNetwork();
+      final (big, sha) = await randomFile('big.bin', 900 * 1024);
+      server(net, {sha: big.path});
+      final session = ReaderSession(passHolder, pass: pass, sendReceipts: false);
+      final r = await serve(net, 'p', {}).fetch(sha, 900 * 1024, ['server'], '${tmp.path}/p', reader: session);
+      expect(r.error, contains('receipts'));
+    });
   });
 }

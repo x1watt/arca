@@ -46,6 +46,14 @@ class ChainParams {
   /// earns nothing and its collections earn no interest (section 4).
   int get anchorLifeTicks => dayTicks;
 
+  /// A pass lasts a day; its servers then have a day to settle.
+  int get passTicks => dayTicks;
+  int get passSettleTicks => dayTicks;
+
+  /// Sync scores lose a seventh each day, so they follow what a member
+  /// keeps now.
+  static const syncScoreDecay = 7;
+
   /// New marcas on [day]: halving every [halvingDays], never below the floor.
   int issuanceOn(int day) {
     final halvings = day ~/ halvingDays;

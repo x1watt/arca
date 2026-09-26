@@ -49,6 +49,9 @@ class CirclePolicy {
     this.disconnectAfterTicks = 6 * 3600,
     this.disconnectedFree = true,
     this.payoutShares = const {'stewards': 45, 'contributors': 45, 'moderators': 10},
+    this.passPrice = 0,
+    this.freeAllowance = 1 << 30,
+    this.memberScore = 0,
   });
 
   /// Joining: anyone joins by publishing a key, or newcomers wait for
@@ -74,7 +77,23 @@ class CirclePolicy {
   /// to moderators and indexers.
   final Map<String, int> payoutShares;
 
+  /// Price of a 24-hour pass in grains; 0 when passes are not sold.
+  final int passPrice;
+
+  /// Free reading per reader per server per day, in bytes.
+  final int freeAllowance;
+
+  /// The sync score that gives a member free access beyond the allowance.
+  final int memberScore;
+
+  Map<String, Object?> get reading => {
+    'passPrice': passPrice,
+    'freeAllowance': freeAllowance,
+    'memberScore': memberScore,
+  };
+
   Map<String, Object?> toJson() => {
+    ...reading,
     'openJoin': openJoin,
     'openPublish': openPublish,
     'publicVisibility': publicVisibility,
@@ -92,6 +111,9 @@ class CirclePolicy {
     disconnectAfterTicks: m['disconnectAfterTicks'] as int? ?? 6 * 3600,
     disconnectedFree: m['disconnectedFree'] as bool? ?? true,
     payoutShares: (m['payoutShares'] as Map?)?.cast<String, int>() ?? const {},
+    passPrice: m['passPrice'] as int? ?? 0,
+    freeAllowance: m['freeAllowance'] as int? ?? 1 << 30,
+    memberScore: m['memberScore'] as int? ?? 0,
   );
 }
 
@@ -294,6 +316,9 @@ class CircleLog {
         byAdmin();
         policy = CirclePolicy.fromJson(b);
         if (policy.approvals < 1) throw const LogError('approvals must be at least one');
+        if (policy.passPrice < 0 || policy.freeAllowance < 0 || policy.memberScore < 0) {
+          throw const LogError('reading settings cannot be negative');
+        }
         final shares = policy.payoutShares.values;
         if (shares.any((s) => s < 0) || shares.fold(0, (a, s) => a + s) != 100) {
           throw const LogError('payout shares must add up to 100');
@@ -366,6 +391,7 @@ class CircleLog {
     'memberRoot': toHex(memberRoot()),
     'payoutRoot': toHex(payoutTable().root),
     'collections': {for (final e in publicCollections.entries) e.key: e.value.partitions},
+    'reading': policy.reading,
   };
 }
 

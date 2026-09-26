@@ -280,6 +280,12 @@ Files travel on the same addresses and link as the Nostr messages, as binary mes
   - Eight chunks are in flight at a time. A chunk that times out is asked for again, of another provider when there is one; a provider that answers `MISS` is dropped.
   - The download writes to `<file>.part` and remembers the chunks it has in `<file>.part.have`, so it continues where it stopped.
   - It is renamed into place only when the whole file matches its SHA-256; bytes that do not match are discarded.
+- **Reading rules** (`transport/reading.dart`, whitepaper section 9). A server given `ServingRules` treats readers in three ways, and without rules serves everyone as before.
+  - A reader introduces itself to each server with `HELLO` (its key and, if it bought one, its pass, signed for that server's address); the server answers `WELCOME` with its own key and how it will treat the reader. A reader that says nothing counts by its address.
+  - **Members** whose sync score reaches the circle's threshold are served freely and first.
+  - **Pass holders** are served while they keep signing `RECEIPT`s: running byte totals for that server, which it keeps and settles on the chain after the pass ends. A server that has sent more than its slack beyond the latest receipt (1 MiB, plus a quarter of what it served, for chunks lost and sent again) answers `LIMIT`, which the reader treats as a pause: it signs a receipt at once and asks again, and gives up after three pauses in a row.
+  - **Free readers** get a daily allowance per key, and all free readers together share a daily cap, so many keys only compete for that share. Over either, the server answers `LIMIT` and the download ends with a plain reason when no other server serves.
+  - Queued requests are served members first, then pass holders, then free readers, a few at a time. Nothing about timing or load leaves the device.
 - **Not yet used:** i2p-dart's swarm (`fetchByB32`, `discover`) could spread large files across many holders. It needs the node's own destination, while Arca serves from one destination per profile.
 
 ### 5.6 What the settings screen shows
@@ -450,9 +456,16 @@ Built so far (milestones 1 to 5):
   - About once an hour (`anchorTicks`) a moderator's node anchors the log: its head, the member root, the root of the public collections, the payout root, and the public collections with their partitions, which replace what the circle listed before. Closed collections never reach the chain. Admin and moderator changes travel in the anchor: appointing takes the admin; removing a moderator or replacing the admin takes signatures from a majority of the current moderators over the new admin and moderator list.
   - A circle whose last anchor is more than a day old is cut off: its pool earns nothing and its collections earn no interest. Mining stays open to every steward whatever its circle, so a chain where every circle lapsed can still include the anchors that bring them back. Genesis counts as the genesis circles' first anchor.
   - Payouts: the admin's software splits what the pool earned by the policy (45% stewards, 45% contributors, 10% moderators by default; `distribute`) into cumulative totals per member, written to the log as a payout entry that can only grow. The anchor commits them as a Merkle root; a member's `claim` shows its leaf and receives its total minus what it claimed before. A claim above the table, someone else's line, or more than the pool holds fails.
-  - Not yet: the review queue, quotas and the disconnected-circle fallback act only once passes exist (milestone 6); log entries travel between devices with the rest of the collaboration events when the chain moves into the core (milestone 7). Removed collections leave the chain at once; the whitepaper's 30-day grace period is still to do.
+  - Not yet: the review queue, quotas and the disconnected-circle fallback belong to the core's use of the log (milestone 7); log entries travel between devices with the rest of the collaboration events when the chain moves into the core (milestone 7). Removed collections leave the chain at once; the whitepaper's 30-day grace period is still to do.
 
-Next: passes and light clients (6), and the wallet (7).
+- **Reading** (`chain/passes.dart`, milestone 6).
+  - Each anchor carries the circle's reading settings from its policy: the price of a 24-hour pass (0 when none are sold), the free allowance, and the sync score that gives members free access.
+  - `buyPass` pays the price into the pass, for the circle or one of its collections. No passes are sold by a circle that is cut off from the chain.
+  - After the pass ends, each server submits once the latest total the reader signed for it (`settlePass`); a receipt the reader did not sign, or signed for another server, fails.
+  - A day later the chain closes the pass: half is burned, half goes to the servers by bytes delivered (back to the reader when nobody served). The burned half counts towards the interest of the collection the pass named, unless the reader is a member, so buying passes on your own files always loses half and raises nothing.
+  - **Sync score**, per circle and member, recomputed as each day closes: the size of what it proved keeping for the circle, each partition weighted by its rarity (ten copies' weight shared among its copies), plus half of each whole collection of the circle it kept at ten copies' weight; yesterday's score loses a seventh. A missed proof resets it. It decides member access and serving priority, and is what the payout policy's stewards' share follows.
+
+Next: fraud proofs and light clients (the rest of 6), and the wallet (7).
 
 ## 11. Open questions
 

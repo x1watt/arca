@@ -165,6 +165,7 @@ A steward's mining read is cheap (one 1 KB read per declared partition per tick)
 - A producer checks each transaction once: it applies it to a copy of the state and keeps that copy, instead of trying it on a copy and then applying it again, which cost every holding proof two Argon2id.
 - The first block of each day settles the day before: one pass over every steward's declarations and every collection's keepers, in integer arithmetic. Cheap on the testnet; at mainnet size (millions of declarations) it must be measured before launch, and may need to be spread over the day's first blocks.
 - A circle log is checked entry by entry, each with one or more Schnorr signatures in plain Dart. A device keeps the folded log and checks only new entries; replaying a long log from the start is for a new device, off the UI isolate.
+- Reading receipts cost the reader one Schnorr signature and the server one check per 256 KB delivered, not per chunk; a `HELLO` costs one of each per server per download at most.
 
 ---
 

@@ -13,6 +13,7 @@ import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
 import 'params.dart';
+import 'passes.dart';
 import 'rewards.dart';
 import 'tx.dart';
 
@@ -39,6 +40,13 @@ class CircleState {
   /// Grains each member has claimed from the pool so far.
   final claimed = <String, int>{};
 
+  /// Reading, as the latest anchor sets it: the price of a 24-hour pass
+  /// (0 when passes are not sold), the free allowance in bytes per reader
+  /// per day, and the sync score that gives members free access.
+  int passPrice = 0;
+  int freeAllowance = 0;
+  int memberScore = 0;
+
   bool mayAnchor(String key) => key == admin || moderators.contains(key);
 
   Map<String, Object?> toJson() => {
@@ -52,6 +60,9 @@ class CircleState {
     'payoutRoot': payoutRoot,
     'anchoredAt': anchoredAt,
     'claimed': claimed,
+    'passPrice': passPrice,
+    'freeAllowance': freeAllowance,
+    'memberScore': memberScore,
   };
 
   CircleState copy() => CircleState(admin: admin, name: name, pool: pool, moderators: [...moderators])
@@ -60,7 +71,10 @@ class CircleState {
     ..memberRoot = memberRoot
     ..payoutRoot = payoutRoot
     ..anchoredAt = anchoredAt
-    ..claimed.addAll(claimed);
+    ..claimed.addAll(claimed)
+    ..passPrice = passPrice
+    ..freeAllowance = freeAllowance
+    ..memberScore = memberScore;
 }
 
 /// A collection as the chain knows it: its circle, the partitions its
@@ -99,6 +113,12 @@ class ChainState {
 
   /// Steward key to standing, recomputed as each day closes.
   final standing = <String, int>{};
+
+  /// Open passes by the id of the transaction that bought them.
+  final passes = <String, PassState>{};
+
+  /// Circle to (member key to sync score), updated as each day closes.
+  final syncScores = <String, Map<String, int>>{};
 
   /// Steward key to (partition to the circle the keeping is for).
   final declarations = <String, Map<int, String>>{};
@@ -180,6 +200,8 @@ class ChainState {
     s.collections.addAll(collections); // never changed in place
     burnsFor.forEach((k, v) => s.burnsFor[k] = Map.of(v));
     s.standing.addAll(standing);
+    passes.forEach((k, v) => s.passes[k] = v.copy());
+    syncScores.forEach((k, v) => s.syncScores[k] = Map.of(v));
     declarations.forEach((k, v) => s.declarations[k] = Map.of(v));
     return s;
   }
@@ -224,6 +246,18 @@ class ChainState {
           ..payoutRoot = b['payoutRoot'] as String? ?? ''
           ..anchoredAt = tick;
         if (b['collections'] case final Map listed) _listCollections(id, listed);
+        if (b['reading'] case final Map r) {
+          int field(String name) {
+            final v = r[name] ?? 0;
+            if (v is! int || v < 0) throw ChainError('bad $name');
+            return v;
+          }
+
+          circle
+            ..passPrice = field('passPrice')
+            ..freeAllowance = field('freeAllowance')
+            ..memberScore = field('memberScore');
+        }
       case TxType.claim:
         final id = b['circle'] as String? ?? '';
         final circle = circles[id];
@@ -276,15 +310,38 @@ class ChainState {
       case TxType.burn:
         final amount = b['amount'] as int? ?? 0;
         if (amount <= 0) throw const ChainError('amount must be positive');
+        final id = b['collection'] as String?;
+        if (id != null && !collections.containsKey(id)) throw const ChainError('no such collection');
         _spend(tx.from, amount);
         burned += amount;
-        final id = b['collection'] as String?;
-        final c = id == null ? null : collections[id];
-        if (id != null && c == null) throw const ChainError('no such collection');
-        if (c != null && !_isMember(tx.from, c.circle)) {
-          final days = burnsFor.putIfAbsent(id!, () => {});
-          days[day] = (days[day] ?? 0) + amount;
+        burnedFor(tx.from, id ?? '', amount);
+      case TxType.buyPass:
+        final id = b['circle'] as String? ?? '';
+        final circle = circles[id];
+        if (circle == null) throw const ChainError('no such circle');
+        if (!isLive(id, tick)) throw const ChainError('the circle is cut off from the chain: no passes are sold');
+        if (circle.passPrice <= 0) throw const ChainError('this circle does not sell passes');
+        final collection = b['collection'] as String? ?? '';
+        if (collection.isNotEmpty && collections[collection]?.circle != id) {
+          throw const ChainError('no such collection in this circle');
         }
+        _spend(tx.from, circle.passPrice);
+        passes[tx.id] = PassState(
+          reader: tx.from,
+          circle: id,
+          collection: collection,
+          price: circle.passPrice,
+          expires: tick + params.passTicks,
+        );
+      case TxType.settlePass:
+        final id = b['pass'] as String? ?? '';
+        final pass = passes[id];
+        if (pass == null) throw const ChainError('no such pass, or it is closed');
+        if (pass.activeAt(tick)) throw const ChainError('the pass is still active');
+        if (pass.delivered.containsKey(tx.from)) throw const ChainError('this server settled already');
+        final receipt = Receipt(pass: id, server: tx.from, bytes: b['bytes'] as int? ?? 0, sig: b['sig'] as String? ?? '');
+        if (receipt.bytes <= 0 || !receipt.verify(pass.reader)) throw const ChainError('not a receipt the reader signed');
+        pass.delivered[tx.from] = receipt.bytes;
       case TxType.holdingProof:
         final proof = SliceProof.fromJson(b['proof'] as Map);
         if (proof.steward != tx.from) throw const ChainError('a steward proves only its own keeping');
@@ -318,6 +375,9 @@ class ChainState {
         declaredOn.remove(steward);
         provenOn.remove(steward);
         standing.remove(steward);
+        for (final scores in syncScores.values) {
+          scores.remove(steward);
+        }
       }
     }
     settleDay(this, day);
@@ -390,6 +450,15 @@ class ChainState {
     return c != null && c.anchoredAt >= 0 && atTick - c.anchoredAt <= params.anchorLifeTicks;
   }
 
+  /// Records marcas [key] burned for [collection]: they raise its interest
+  /// for 30 days, unless [key] is a member of its circle.
+  void burnedFor(String key, String collection, int amount) {
+    final c = collections[collection];
+    if (c == null || amount <= 0 || _isMember(key, c.circle)) return;
+    final days = burnsFor.putIfAbsent(collection, () => {});
+    days[day] = (days[day] ?? 0) + amount;
+  }
+
   /// Whether [key] belongs to [circle]: its admin, a moderator, or a
   /// steward keeping partitions for it. Burns by members do not raise the
   /// interest of their own circle's collections.
@@ -416,6 +485,8 @@ class ChainState {
       for (final k in (burnsFor.keys.toList()..sort()))
         'u:$k:${canonicalJson({for (final e in burnsFor[k]!.entries) '${e.key}': e.value})}',
       for (final k in (standing.keys.toList()..sort())) 'r:$k:${standing[k]}',
+      for (final k in (passes.keys.toList()..sort())) 'q:$k:${canonicalJson(passes[k]!.toJson())}',
+      for (final k in (syncScores.keys.toList()..sort())) 'y:$k:${canonicalJson(syncScores[k])}',
       for (final k in (declarations.keys.toList()..sort()))
         'd:$k:${canonicalJson({for (final e in declarations[k]!.entries) '${e.key}': e.value})}',
       for (final k in (declaredOn.keys.toList()..sort()))

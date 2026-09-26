@@ -4,9 +4,18 @@
 // that can never start a Nostr message ('['), so each side ignores the
 // other's traffic.
 //
-//   GET   0xA1 sha256[32] offset[8] length[4]
-//   DATA  0xA2 sha256[32] offset[8] total[8] bytes
-//   MISS  0xA3 sha256[32]
+//   GET     0xA1 sha256[32] offset[8] length[4]
+//   DATA    0xA2 sha256[32] offset[8] total[8] bytes
+//   MISS    0xA3 sha256[32]
+//   HELLO   0xA4 key[32] pass[32] sig[64]        reader: who I am
+//   RECEIPT 0xA5 pass[32] bytes[8] sig[64]       reader: running total
+//   WELCOME 0xA6 key[32] status[1] allowance[8]  server: who I am, how I
+//                                                treat you
+//   LIMIT   0xA7 sha256[32] reason[1]            server: no more for now
+//
+// A server with [ServingRules] serves members first, then pass holders as
+// long as their receipts keep up, then free readers within their daily
+// allowance (see reading.dart). Without rules it serves everyone.
 //
 // Downloads write into `<target>.part`, remember which chunks arrived in
 // `<target>.part.have`, continue where they stopped, and are renamed into
@@ -16,11 +25,15 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
+import '../chain/passes.dart' show Receipt;
 import '../crypto/hex.dart';
+import '../crypto/schnorr.dart';
 import '../library/library.dart' show hashFile;
 import 'link.dart';
+import 'reading.dart';
 
-const _get = 0xA1, _data = 0xA2, _miss = 0xA3;
+const _get = 0xA1, _data = 0xA2, _miss = 0xA3, _hello = 0xA4, _receipt = 0xA5, _welcome = 0xA6, _limit = 0xA7;
+final _noPass = Uint8List(32);
 
 /// Bytes per chunk: with the header, one message stays under the 32 KiB
 /// I2P datagram limit.
@@ -40,6 +53,7 @@ class BlobService {
     required this.resolve,
     this.window = 8,
     this.chunkTimeout = const Duration(seconds: 20),
+    this.rules,
   }) {
     _sub = link.incoming.where((m) => m.to == address && m.bytes.isNotEmpty).listen(_onInbound);
   }
@@ -62,7 +76,28 @@ class BlobService {
   /// Bytes served since start, for the transfers view.
   int served = 0;
 
-  Future<void> close() => _sub.cancel();
+  /// Who may read how much; null serves everyone.
+  final ServingRules? rules;
+
+  /// The latest receipt of each pass this server delivered under, to
+  /// settle on the chain after the pass ends.
+  final receipts = <String, Receipt>{};
+
+  final _readers = <String, _Reader>{};
+  final _freeByKey = <String, int>{};
+  var _freeToday = 0;
+  var _today = -1;
+  final _queue = <(int, String, String, int, int)>[]; // (class, to, sha, offset, length)
+  var _serving = 0;
+
+  /// Welcomes from servers, for readers' sessions.
+  final _welcomes = StreamController<String>.broadcast();
+  final _serverInfo = <String, (String, ReaderStatus)>{};
+
+  Future<void> close() async {
+    await _sub.cancel();
+    await _welcomes.close();
+  }
 
   void _onInbound(Inbound m) {
     final b = m.bytes;
@@ -71,11 +106,126 @@ class BlobService {
     final data = ByteData.sublistView(b);
     switch (b[0]) {
       case _get when b.length >= 45:
-        unawaited(_serve(m.from, sha, data.getUint64(33), data.getUint32(41)));
+        _requested(m.from, sha, data.getUint64(33), data.getUint32(41));
       case _data when b.length >= 49:
         _downloads[sha]?.received(m.from, data.getUint64(33), data.getUint64(41), Uint8List.sublistView(b, 49));
       case _miss:
         _downloads[sha]?.missing(m.from);
+      case _limit when b.length >= 34:
+        _downloads[sha]?.limited(m.from, LimitReason.values[b[33].clamp(0, LimitReason.values.length - 1)]);
+      case _hello when b.length >= 129:
+        unawaited(_onHello(m.from, sha, toHex(b.sublist(33, 65)), b.sublist(65, 129)));
+      case _receipt when b.length >= 105:
+        _onReceipt(m.from, sha, data.getUint64(33), toHex(b.sublist(41, 105)));
+      case _welcome when b.length >= 42:
+        _serverInfo[m.from] = (sha, ReaderStatus.values[b[33].clamp(0, ReaderStatus.values.length - 1)]);
+        _welcomes.add(m.from);
+    }
+  }
+
+  // ---- Serving under rules ----
+
+  Future<void> _onHello(String from, String key, String pass, List<int> sig) async {
+    final r = rules;
+    if (r == null) return;
+    final hasPass = pass != toHex(_noPass);
+    bool signed;
+    try {
+      signed = schnorrVerify(fromHex(key), helloMessage(from, address, key, hasPass ? pass : ''), sig);
+    } catch (_) {
+      signed = false;
+    }
+    if (!signed) return;
+    final status = r.isMember(key)
+        ? ReaderStatus.member
+        : hasPass && await r.passValid(key, pass)
+        ? ReaderStatus.pass
+        : ReaderStatus.free;
+    _readers[from] = _Reader(key, status == ReaderStatus.pass ? pass : null, status);
+    _newDay();
+    final left = (r.freeAllowance - (_freeByKey[key] ?? 0)).clamp(0, r.freeAllowance);
+    final msg = ByteData(42)
+      ..setUint8(0, _welcome)
+      ..setUint8(33, status.index)
+      ..setUint64(34, left);
+    final bytes = msg.buffer.asUint8List()..setRange(1, 33, fromHex(r.serverKey));
+    await link.send(from, bytes, from: address);
+  }
+
+  void _onReceipt(String from, String pass, int bytes, String sig) {
+    final r = rules, reader = _readers[from];
+    if (r == null || reader == null || reader.pass != pass || bytes <= reader.receipted) return;
+    final receipt = Receipt(pass: pass, server: r.serverKey, bytes: bytes, sig: sig);
+    if (!receipt.verify(reader.key)) return;
+    reader.receipted = bytes;
+    receipts[pass] = receipt;
+  }
+
+  void _newDay() {
+    final day = DateTime.now().toUtc().millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
+    if (day == _today) return;
+    _today = day;
+    _freeToday = 0;
+    _freeByKey.clear();
+  }
+
+  void _requested(String from, String sha, int offset, int length) {
+    final r = rules;
+    if (r == null) {
+      unawaited(_serve(from, sha, offset, length));
+      return;
+    }
+    final status = _readers[from]?.status ?? ReaderStatus.free;
+    _queue.add((2 - status.index, from, sha, offset, length));
+    _pump();
+  }
+
+  void _pump() {
+    final r = rules!;
+    while (_serving < r.slots && _queue.isNotEmpty) {
+      var best = 0;
+      for (var i = 1; i < _queue.length; i++) {
+        if (_queue[i].$1 < _queue[best].$1) best = i;
+      }
+      final (_, to, sha, offset, length) = _queue.removeAt(best);
+      final refused = _admit(r, to, length.clamp(0, blobChunk));
+      if (refused != null) {
+        final msg = Uint8List(34)..[0] = _limit;
+        msg.setRange(1, 33, fromHex(sha));
+        msg[33] = refused.index;
+        unawaited(link.send(to, msg, from: address));
+        continue;
+      }
+      _serving++;
+      unawaited(
+        _serve(to, sha, offset, length).whenComplete(() {
+          _serving--;
+          _pump();
+        }),
+      );
+    }
+  }
+
+  /// Null when [to] may have [length] more bytes now, or why not.
+  LimitReason? _admit(ServingRules r, String to, int length) {
+    final reader = _readers[to];
+    switch (reader?.status) {
+      case ReaderStatus.member:
+        return null;
+      case ReaderStatus.pass:
+        // Lost chunks are sent again but counted once by the reader, so a
+        // quarter of what was served is allowed on top of the slack.
+        if (reader!.served - reader.receipted > r.receiptSlack + reader.served ~/ 4) return LimitReason.receipts;
+        reader.served += length;
+        return null;
+      case ReaderStatus.free || null:
+        _newDay();
+        final key = reader?.key ?? to; // no hello: the address stands for the key
+        if ((_freeByKey[key] ?? 0) + length > r.freeAllowance) return LimitReason.allowance;
+        if (_freeToday + length > r.freeTotal) return LimitReason.freeShare;
+        _freeByKey[key] = (_freeByKey[key] ?? 0) + length;
+        _freeToday += length;
+        return null;
     }
   }
 
@@ -123,6 +273,7 @@ class BlobService {
     String target, {
     void Function(int received)? onProgress,
     bool Function()? cancelled,
+    ReaderSession? reader,
   }) async {
     if (await File(target).exists()) {
       final (have, _, _) = await hashFile(File(target));
@@ -131,13 +282,59 @@ class BlobService {
     final others = providers.where((p) => p != address).toSet().toList();
     if (others.isEmpty) return const BlobResult(error: 'Nobody to download it from.');
     if (_downloads.containsKey(sha256)) return const BlobResult(error: 'Already downloading.');
-    final d = _Download(this, sha256, size, others, target, onProgress, cancelled);
+    final d = _Download(this, sha256, size, others, target, onProgress, cancelled, reader);
     _downloads[sha256] = d;
     try {
       return await d.run();
     } finally {
       _downloads.remove(sha256);
     }
+  }
+
+  /// Introduces [session] to [servers] and waits (a few seconds at most)
+  /// for their welcomes, so the first requests already count as its own.
+  Future<void> _introduce(ReaderSession session, List<String> servers) async {
+    final pending = servers.where((s) => !session.serverKeys.containsKey(s)).toSet();
+    if (pending.isEmpty) return;
+    final key = toHex(publicKeyOf(session.secretKey));
+    final pass = session.pass ?? '';
+    final done = Completer<void>();
+    final sub = _welcomes.stream.listen((from) {
+      final info = _serverInfo[from];
+      if (info == null || !pending.remove(from)) return;
+      session.serverKeys[from] = info.$1;
+      session.status[from] = info.$2;
+      if (pending.isEmpty && !done.isCompleted) done.complete();
+    });
+    for (final to in pending.toList()) {
+      final sig = schnorrSign(session.secretKey, helloMessage(address, to, key, pass));
+      final msg = Uint8List(129)..[0] = _hello;
+      msg
+        ..setRange(1, 33, fromHex(key))
+        ..setRange(33, 65, pass.isEmpty ? _noPass : fromHex(pass))
+        ..setRange(65, 129, sig);
+      unawaited(link.send(to, msg, from: address));
+    }
+    await done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
+    await sub.cancel();
+  }
+
+  /// Sends [session]'s signed running total for [server], when it has a
+  /// pass and delivered bytes since the last receipt.
+  void _sendReceipt(ReaderSession session, String server, {bool force = false}) {
+    final pass = session.pass, serverKey = session.serverKeys[server];
+    if (pass == null || serverKey == null || !session.sendReceipts) return;
+    final total = session.delivered[server] ?? 0, last = session.receipted[server] ?? 0;
+    if (total <= last || (!force && total - last < session.receiptEvery)) return;
+    session.receipted[server] = total;
+    final r = Receipt.sign(session.secretKey, pass, serverKey, total);
+    final msg = ByteData(105)
+      ..setUint8(0, _receipt)
+      ..setUint64(33, total);
+    final bytes = msg.buffer.asUint8List()
+      ..setRange(1, 33, fromHex(pass))
+      ..setRange(41, 105, fromHex(r.sig));
+    unawaited(link.send(server, bytes, from: address));
   }
 
   Future<bool> _request(String to, String sha, int offset, int length) {
@@ -150,9 +347,26 @@ class BlobService {
   }
 }
 
+class _Reader {
+  _Reader(this.key, this.pass, this.status);
+  final String key;
+  final String? pass;
+  final ReaderStatus status;
+  int served = 0;
+  int receipted = 0;
+}
+
 class _Download {
-  _Download(this.service, this.sha, this.size, this.providers, this.target, this.onProgress, this.cancelled)
-    : chunks = size == 0 ? 0 : (size + blobChunk - 1) ~/ blobChunk;
+  _Download(
+    this.service,
+    this.sha,
+    this.size,
+    this.providers,
+    this.target,
+    this.onProgress,
+    this.cancelled,
+    this.reader,
+  ) : chunks = size == 0 ? 0 : (size + blobChunk - 1) ~/ blobChunk;
 
   final BlobService service;
   final String sha;
@@ -161,7 +375,10 @@ class _Download {
   final String target;
   final void Function(int)? onProgress;
   final bool Function()? cancelled;
+  final ReaderSession? reader;
   final int chunks;
+  final _limits = <LimitReason>{};
+  final _waitingReceipts = <String, int>{};
 
   late final File _part = File('$target.part');
   late final File _haveFile = File('$target.part.have');
@@ -187,6 +404,7 @@ class _Download {
     _received = _have.fold(0, (n, h) => n + h) * blobChunk;
     if (_received > size) _received = size;
     _out = await _part.open(mode: FileMode.append);
+    if (reader != null) await service._introduce(reader!, providers);
     if (chunks == 0 || !_have.contains(0)) {
       _finish();
     } else {
@@ -195,6 +413,11 @@ class _Download {
     final ticker = Timer.periodic(const Duration(milliseconds: 500), (_) => _tick());
     final r = await _done.future;
     ticker.cancel();
+    if (reader != null) {
+      for (final p in providers) {
+        service._sendReceipt(reader!, p, force: true);
+      }
+    }
     await _writes;
     await _out?.close();
     if (!r.ok) {
@@ -232,7 +455,7 @@ class _Download {
   bool _ask(int chunk, {required String? avoid}) {
     var to = _provider(chunk);
     if (to == null) {
-      _fail('Nobody has this file right now.');
+      _fail(_limits.isEmpty ? 'Nobody has this file right now.' : _limits.first.message);
       return false;
     }
     if (to == avoid) {
@@ -271,6 +494,11 @@ class _Download {
     _have[chunk] = 1;
     _inFlight.remove(chunk);
     _received += bytes.length;
+    _waitingReceipts.remove(from);
+    if (reader case final session?) {
+      session.delivered[from] = (session.delivered[from] ?? 0) + bytes.length;
+      service._sendReceipt(session, from);
+    }
     final copy = Uint8List.fromList(bytes);
     _writes = _writes.then((_) async {
       await _out!.setPosition(offset);
@@ -290,6 +518,21 @@ class _Download {
     } else {
       _fill();
     }
+  }
+
+  /// [from] will serve no more for now: treated as gone, with its reason
+  /// kept for the error if nobody else serves.
+  void limited(String from, LimitReason why) {
+    if (why == LimitReason.receipts &&
+        reader != null &&
+        (_waitingReceipts[from] = (_waitingReceipts[from] ?? 0) + 1) <= 3) {
+      // A pause, not a refusal: sign the receipt now; the chunk is asked
+      // again when its request times out.
+      service._sendReceipt(reader!, from, force: true);
+      return;
+    }
+    _limits.add(why);
+    missing(from);
   }
 
   void missing(String from) {

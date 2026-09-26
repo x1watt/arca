@@ -14,6 +14,7 @@ import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
+import 'passes.dart';
 import 'state.dart';
 import 'tx.dart';
 
@@ -91,6 +92,7 @@ class Block {
     if (tick <= state.tick && state.height > 0) throw const ChainError('the clock went backwards');
     final next = state.copy();
     next.startDay(state.dayOf(tick));
+    closePasses(next, tick);
     if (state.corpusRoot.isNotEmpty && next.declarations.isNotEmpty) {
       // Mining proof: a slice of a partition this producer declared, for
       // the circle it names, below the target. (Before anyone declares, at
