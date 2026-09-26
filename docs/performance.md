@@ -144,6 +144,16 @@ Alice's app died without a word during a two-instance test; the kernel log had i
 
 > **Rule: a silent exit is a crash until the kernel log says otherwise.** `journalctl -k | grep segfault` names the library and the offset; `readelf -lW` and `nm` turn the offset into a function.
 
+### 3.14 Packing: the price of a copy that is really yours
+
+The whitepaper wants making a packed slice on demand to cost 1,000 to 10,000 times more than reading it from the packed copy, so a steward cannot claim a copy they do not keep. `tool/packing_bench.dart` on this desktop (16 threads, one chunk per thread, Argon2id from the `cryptography` package in plain Dart), with page-cache reads, the honest steward's best case:
+
+- Argon2id 8 MB: 34 ms per chunk, 4.05 MB/s, 408x. Too cheap.
+- Argon2id 32 MB: 146 ms per chunk, 1.40 MB/s, 1,355x. The testnet setting.
+- Argon2id 64 MB: 264 ms per chunk, 0.86 MB/s, 3,050x. The mainnet setting; a 32 GB partition takes about 10 hours on one core, so packing must spread over cores and run in the background.
+
+Not measured yet: the same on the C61 phone, and a native RandomX for comparison.
+
 ---
 
 ## 4. The heavy jobs and how they are run

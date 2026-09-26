@@ -385,7 +385,38 @@ Talk.en.srt            subtitles, one file per language
 
 The model download is the one connection that does not go over I2P: a plain HTTPS download from GitHub, started by the user, carrying no profile key or address. It reveals to GitHub that this IP downloaded a speech model, nothing about the profile.
 
-## 10. Open questions
+## 10. The global chain (in progress)
+
+The chain and marcas follow the whitepaper (sections 6 to 9) and are built in milestones on a testnet first: the same rules with smaller numbers (a "day" of 10 minutes, partitions of 64 MB). Constants are in `packages/arca_core/lib/src/chain/params.dart`, one set per network; nothing else sets them.
+
+Built so far (milestones 1 and 2):
+
+- **Corpus** (`chain/corpus.dart`).
+  - Files are cut into 256 KB chunks; each chunk is a Merkle tree of 1 KB slices.
+  - Chunks are laid end to end: on the testnet, files are sorted by SHA-256 and each counts once however many collections hold it.
+  - Chunks are grouped into partitions, and there is one corpus root over the partition roots.
+  - A slice is proven with about 8 hashes inside its chunk and one path per level above.
+- **Packing** (`chain/packing.dart`).
+  - A steward stores each chunk XOR a keystream from `Argon2id(key, partition, index)`, expanded with SHA-256.
+  - Unpacking or checking one slice needs the seed and 32 hashes.
+  - Measured on this desktop (`tool/packing_bench.dart`): remaking a slice costs 408x reading it with 8 MB of memory, 1,355x with 32 MB (the testnet setting) and 3,050x with 64 MB (the mainnet setting), against the whitepaper's 1,000 to 10,000x.
+  - Packing runs at 1.4 MB/s per core with 32 MB.
+- **State and transactions** (`chain/state.dart`, `chain/tx.dart`).
+  - Accounts are the profiles' Nostr keys. Amounts are in grains; 1 marca = 100,000,000 grains.
+  - Transactions are signed (BIP-340) and numbered per account, so they cannot be replayed.
+  - Types so far:
+    - `transfer`;
+    - `createCircle`, which burns the circle fee;
+    - `anchor`, by the circle's admin or a moderator; only the admin sets moderators;
+    - `declare` and `undeclare` of partitions for a circle.
+  - The state holds balances, nonces, circles with their pools and latest anchors, declarations, and burned and issued totals. It is committed as one Merkle root over its sorted entries.
+- **Blocks** (`chain/block.dart`).
+  - The header commits to the previous block, the clock tick, the transactions root, the resulting state root, the corpus root and the producer's proof, and is signed by the producer.
+  - A node applies a block to a copy of its state and accepts it only if every transaction is valid and the root it computes is the one signed. A wrong state is a rejected block.
+
+Next: the clock and mining with holding proofs (milestone 3), issuance with the two budgets and the replication curve (4), circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
+
+## 11. Open questions
 
 - Exact Arca event kinds and their tags (collection head, catalog announcements, circle log entries).
 - Port numbers and the control protocol's message set.
