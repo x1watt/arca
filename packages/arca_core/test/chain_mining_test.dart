@@ -98,14 +98,12 @@ void main() {
     return b.applyTo(state);
   }
 
-  test('a steward mines; new marcas go to its circle pool; blocks without a fair proof are refused', () async {
+  test('a steward mines; blocks create no marcas themselves; blocks without a fair proof are refused', () async {
     var state = await declared(stewardKey, 0);
-    final pool = state.circles['commons']!.pool;
     final block = await mine(state, stewardKey, 2);
     final next = await Block.fromJson(block.toJson()).applyTo(state);
-    final reward = p.issuanceOn(0) ~/ p.blocksPerDay;
-    expect(next.circles['commons']!.pool, pool + reward);
-    expect(next.issued, state.issued + reward);
+    expect(next.height, state.height + 1);
+    expect(next.issued, state.issued, reason: 'issuance is paid as each day closes (chain_rewards_test)');
     // Without a proof, or with someone else's proof, or above the target.
     await expectLater(Block.produce(state, faucet, const [], tick: 2), throwsA(isA<ChainError>()));
     await expectLater(

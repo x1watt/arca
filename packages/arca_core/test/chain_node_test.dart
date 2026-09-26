@@ -61,6 +61,11 @@ Future<void> run(double drop, Duration latency) async {
     p,
     allocations: {toHex(publicKeyOf(faucet)): 1000 * ChainParams.grainsPerMarca},
     circles: {'commons': CircleState(admin: toHex(publicKeyOf(faucet)), name: 'Arca Commons')},
+    // One seeded collection per partition, so the interest budget pays too.
+    collections: {
+      for (var i = 0; i < corpus.partitions; i++)
+        'part-$i': CollectionState(circle: 'commons', partitions: [i], seed: 100 * ChainParams.grainsPerMarca),
+    },
     corpusRoot: corpus.rootHex,
     partitionSizes: [for (var i = 0; i < corpus.partitions; i++) corpus.chunksIn(i)],
     genesisTick: DateTime.now().millisecondsSinceEpoch ~/ p.tickMillis,
@@ -129,7 +134,12 @@ Future<void> run(double drop, Duration latency) async {
   );
   expect(heads, hasLength(1), reason: 'one chain');
   expect(s.day, greaterThanOrEqualTo(3));
-  expect(s.circles['commons']!.pool, greaterThan(0), reason: 'mining paid the circle pool');
+  // Every day the stewards proved paid its whole issuance, storage and
+  // interest, to their circle. Proofs start the day after the declarations
+  // land: day 1, or day 2 on a busy machine.
+  final days = s.circles['commons']!.pool / p.issuanceOn(0);
+  expect((days - days.round()).abs(), lessThan(1e-6), reason: 'whole days of issuance, $days');
+  expect(days.round(), inInclusiveRange(s.day - 2, s.day - 1));
   for (var i = 0; i < 3; i++) {
     expect(s.declarations[nodes[i].key], {i: 'commons'}, reason: 'steward $i proved its keeping every day');
   }

@@ -389,7 +389,7 @@ The model download is the one connection that does not go over I2P: a plain HTTP
 
 The chain and marcas follow the whitepaper (sections 6 to 9) and are built in milestones on a testnet first: the same rules with smaller numbers (a "day" of 10 minutes, partitions of 64 MB). Constants are in `packages/arca_core/lib/src/chain/params.dart`, one set per network; nothing else sets them.
 
-Built so far (milestones 1 to 3):
+Built so far (milestones 1 to 4):
 
 - **Corpus** (`chain/corpus.dart`).
   - Files are cut into 256 KB chunks; each chunk is a Merkle tree of 1 KB slices.
@@ -425,7 +425,14 @@ Built so far (milestones 1 to 3):
   - A day's beacon is the last block of the day before. From the beacon, the day and the steward's key, each declared partition gets a slice to prove; the proof is the packed slice plus its Merkle paths, about 2 KB.
   - A steward that has not proven every partition it declared before the day began, when the next day starts, loses all its declarations.
   - Holding proofs carry no nonce: replaying one changes nothing (it counts only on its own day), and a proof that missed its day, or was made on a fork that lost, must not hold back the steward's later transactions. A steward whose head moves to another fork makes the day's proof again against that fork's beacon.
-- **Rewards so far.** Each block pays `issuance of the day / blocks per day` into the pool of the circle the winning proof names. The two budgets, the replication curve and standing come in milestone 4.
+- **Issuance and rewards** (`chain/rewards.dart`, milestone 4).
+  - Blocks create no marcas. A day's issuance is paid as the day closes (in the first block of the next day), to the stewards who proved their keeping that day, into the pool of the circle each declaration names. What nobody earned is never created.
+  - **Storage budget, 30%:** split over the proven partitions by size times the replication curve, and within a partition equally among its provers.
+  - **Replication curve:** n copies earn together `min(n, 10)^2 / 100` of what ten copies earn. One copy earns a hundredth; each copy earns more up to ten; from the eleventh the total is frozen and split among all.
+  - **Collections on the chain:** a `collection` transaction, by the circle's admin or a moderator, names a collection and the partitions its files are in; genesis corpora carry a seed of interest. A steward keeps a collection on a day when it proved all of its partitions. (Milestone 5 derives this from the anchored circle logs instead.)
+  - **Interest budget, 70%:** a collection's interest is its seed, plus the marcas non-members burned for it over the last 30 days (`burn` transaction naming the collection; members are the admin, moderators and the circle's own stewards), plus a third of the standing of each keeper from another circle divided by the number of collections that keeper keeps. Each keeper's share of that interest follows the replication curve; a steward's standing is the sum of its shares, and the budget is paid in proportion to it.
+  - Standing is recomputed as each day closes from the standing of the day before, so it flows outward one hop per day. A steward that misses a proof loses its standing with its declarations.
+  - Checked against the whitepaper's claims (`test/chain_rewards_test.dart`): a circle keeping only its own archive earns storage and no interest; burns by members count for nothing; a ring of circles keeping each other's junk, besides the real data, reaches 1.125 times an honest steward's standing with two circles and 1.286 times with five, under the 1.5 cap. Over live I2P (three stewards, one seeded collection per partition) every closed day paid exactly its issuance into the circle's pool, and each lone keeper's standing was a hundredth of its collection's seed, as the curve says.
 - **Nodes** (`chain/node.dart`).
   - Blocks, transactions and chain requests travel as messages starting with 0xC1 on the same link as the Nostr and file messages.
   - A node keeps every block it checked, follows the chain with the most work, and keeps a mempool it puts in its own blocks.
@@ -434,7 +441,7 @@ Built so far (milestones 1 to 3):
   - As a steward, it mines each tick and posts its holding proof early each day by itself.
   - Tested in process (three stewards and one that declares a partition it does not keep: it is dropped on the next day, the others agree on one head and state root) on a loopback network that loses 30% of messages and delays them up to three ticks, and over live I2P (`tool/live_chain_check.dart`): three nodes on this desktop with 1 s ticks, 5-tick blocks and 60-tick days ran 64 blocks over five days, with the same head at every sample, all three stewards proving every day, and seven fork switches, all healed within a block or two. The first run, before the resync and the locator, failed: the stewards whose `declare` was lost never got in, and a node stayed on its own fork.
 
-Next: issuance with the two budgets and the replication curve (4), circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
+Next: circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
 
 ## 11. Open questions
 

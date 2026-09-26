@@ -162,6 +162,8 @@ A steward's mining read is cheap (one 1 KB read per declared partition per tick)
 - Holding proofs arrive as a burst early each day (one per declared partition per steward). Checking them must never run on the UI isolate, and when the chain node moves into the core it must not block the core isolate either: proof checks go to a worker, like transcription (4.1), with the core only handing over the proof and taking back the verdict.
 - Phones will not check every proof; they follow headers and fraud proofs (milestone 6).
 - Chain traffic is bounded: a node asks one peer per block interval for news, a `get` is answered with at most 64 blocks, and a burst of orphans from one peer asks once per tick. Catching up after a long absence takes several rounds by design, not one flood.
+- A producer checks each transaction once: it applies it to a copy of the state and keeps that copy, instead of trying it on a copy and then applying it again, which cost every holding proof two Argon2id.
+- The first block of each day settles the day before: one pass over every steward's declarations and every collection's keepers, in integer arithmetic. Cheap on the testnet; at mainnet size (millions of declarations) it must be measured before launch, and may need to be spread over the day's first blocks.
 
 ---
 

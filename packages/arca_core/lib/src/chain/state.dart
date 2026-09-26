@@ -11,6 +11,7 @@ import '../crypto/hex.dart';
 import 'merkle.dart';
 import 'mining.dart';
 import 'params.dart';
+import 'rewards.dart';
 import 'tx.dart';
 
 class CircleState {
@@ -54,6 +55,19 @@ class CircleState {
     ..anchoredAt = anchoredAt;
 }
 
+/// A collection as the chain knows it: its circle, the partitions its
+/// files are in, and a seed of interest (genesis corpora only).
+class CollectionState {
+  CollectionState({required this.circle, required List<int> partitions, this.seed = 0})
+    : partitions = [...partitions]..sort();
+
+  final String circle;
+  final List<int> partitions;
+  final int seed;
+
+  Map<String, Object?> toJson() => {'circle': circle, 'partitions': partitions, 'seed': seed};
+}
+
 /// A rejected transaction or block, with the rule it broke.
 class ChainError implements Exception {
   const ChainError(this.message);
@@ -69,6 +83,14 @@ class ChainState {
   final balances = <String, int>{};
   final nonces = <String, int>{};
   final circles = <String, CircleState>{};
+
+  final collections = <String, CollectionState>{};
+
+  /// Collection to (day to marcas burned for it by non-members).
+  final burnsFor = <String, Map<int, int>>{};
+
+  /// Steward key to standing, recomputed as each day closes.
+  final standing = <String, int>{};
 
   /// Steward key to (partition to the circle the keeping is for).
   final declarations = <String, Map<int, String>>{};
@@ -108,6 +130,7 @@ class ChainState {
     ChainParams params, {
     Map<String, int> allocations = const {},
     Map<String, CircleState> circles = const {},
+    Map<String, CollectionState> collections = const {},
     String corpusRoot = '',
     List<int> partitionSizes = const [],
     int genesisTick = 0,
@@ -120,6 +143,7 @@ class ChainState {
     s.balances.addAll(allocations);
     s.issued = allocations.values.fold(0, (a, b) => a + b);
     s.circles.addAll(circles);
+    s.collections.addAll(collections);
     return s;
   }
 
@@ -141,6 +165,9 @@ class ChainState {
     s.balances.addAll(balances);
     s.nonces.addAll(nonces);
     circles.forEach((k, v) => s.circles[k] = v.copy());
+    s.collections.addAll(collections); // never changed in place
+    burnsFor.forEach((k, v) => s.burnsFor[k] = Map.of(v));
+    s.standing.addAll(standing);
     declarations.forEach((k, v) => s.declarations[k] = Map.of(v));
     return s;
   }
@@ -209,6 +236,31 @@ class ChainState {
           declarations.remove(tx.from);
           declaredOn.remove(tx.from);
         }
+      case TxType.collection:
+        final id = b['collection'] as String? ?? '';
+        final circle = circles[b['circle']];
+        if (!RegExp(r'^[a-z0-9][a-z0-9-]{2,62}$').hasMatch(id)) throw const ChainError('bad collection id');
+        if (circle == null) throw const ChainError('no such circle');
+        if (!circle.mayAnchor(tx.from)) throw const ChainError('only the admin or a moderator lists collections');
+        final existing = collections[id];
+        if (existing != null && existing.circle != b['circle']) throw const ChainError('collection of another circle');
+        final parts = (b['partitions'] as List? ?? const []).cast<int>().toSet().toList();
+        if (parts.any((p) => p < 0 || partitionSizes.isNotEmpty && p >= partitionSizes.length)) {
+          throw const ChainError('no such partition');
+        }
+        collections[id] = CollectionState(circle: b['circle'] as String, partitions: parts, seed: existing?.seed ?? 0);
+      case TxType.burn:
+        final amount = b['amount'] as int? ?? 0;
+        if (amount <= 0) throw const ChainError('amount must be positive');
+        _spend(tx.from, amount);
+        burned += amount;
+        final id = b['collection'] as String?;
+        final c = id == null ? null : collections[id];
+        if (id != null && c == null) throw const ChainError('no such collection');
+        if (c != null && !_isMember(tx.from, c.circle)) {
+          final days = burnsFor.putIfAbsent(id!, () => {});
+          days[day] = (days[day] ?? 0) + amount;
+        }
       case TxType.holdingProof:
         final proof = SliceProof.fromJson(b['proof'] as Map);
         if (proof.steward != tx.from) throw const ChainError('a steward proves only its own keeping');
@@ -241,10 +293,21 @@ class ChainState {
         declarations.remove(steward);
         declaredOn.remove(steward);
         provenOn.remove(steward);
+        standing.remove(steward);
       }
     }
+    settleDay(this, day);
     day = newDay;
     beacon = head;
+  }
+
+  /// Whether [key] belongs to [circle]: its admin, a moderator, or a
+  /// steward keeping partitions for it. Burns by members do not raise the
+  /// interest of their own circle's collections.
+  bool _isMember(String key, String circle) {
+    final c = circles[circle];
+    if (c != null && c.mayAnchor(key)) return true;
+    return declarations[key]?.values.contains(circle) ?? false;
   }
 
   void _spend(String from, int amount) {
@@ -260,6 +323,10 @@ class ChainState {
       for (final k in (balances.keys.toList()..sort())) 'b:$k:${balances[k]}',
       for (final k in (nonces.keys.toList()..sort())) 'n:$k:${nonces[k]}',
       for (final k in (circles.keys.toList()..sort())) 'c:$k:${canonicalJson(circles[k]!.toJson())}',
+      for (final k in (collections.keys.toList()..sort())) 'k:$k:${canonicalJson(collections[k]!.toJson())}',
+      for (final k in (burnsFor.keys.toList()..sort()))
+        'u:$k:${canonicalJson({for (final e in burnsFor[k]!.entries) '${e.key}': e.value})}',
+      for (final k in (standing.keys.toList()..sort())) 'r:$k:${standing[k]}',
       for (final k in (declarations.keys.toList()..sort()))
         'd:$k:${canonicalJson({for (final e in declarations[k]!.entries) '${e.key}': e.value})}',
       for (final k in (declaredOn.keys.toList()..sort()))

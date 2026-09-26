@@ -91,7 +91,8 @@ void main() {
 
       expect(await err('hello'), contains('Not a Nostr secret key'));
       final nsec = nsecEncode(generateSecretKey());
-      expect(await err('${nsec.substring(0, nsec.length - 1)}x'), contains('checksum'));
+      final last = nsec.endsWith('x') ? 'q' : 'x'; // always a different character
+      expect(await err('${nsec.substring(0, nsec.length - 1)}$last'), contains('checksum'));
       expect(await err(npubEncode(publicKeyOf(generateSecretKey()))), contains('Not a Nostr secret key'));
     });
 

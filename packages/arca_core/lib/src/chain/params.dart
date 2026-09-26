@@ -68,6 +68,9 @@ class ChainParams {
   /// other circles.
   static const standingPassOn = 3; // one third
 
+  /// Days over which burns for a collection count towards its interest.
+  static const interestWindowDays = 30;
+
   /// Burned when a circle is created, and burned share of a pass.
   final int circleFee;
   static const passBurnPercent = 50;

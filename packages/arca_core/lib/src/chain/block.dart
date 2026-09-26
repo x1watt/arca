@@ -106,10 +106,6 @@ class Block {
       final why = await p.check(params, challenge, state.corpusRoot, state.partitionSizes);
       if (why != null) throw ChainError('bad mining proof: $why');
       if (proofQuality(challenge, producer, p.packed) >= state.target) throw const ChainError('proof above the target');
-      // New marcas go to the pool of the circle the proof was made for.
-      final reward = params.issuanceOn(next.day) ~/ params.blocksPerDay;
-      next.circles[p.circle]?.pool += reward;
-      next.issued += reward;
       // Retarget towards one block per blockTicks.
       if (state.height > 0) {
         final interval = tick - state.tick;
@@ -123,25 +119,28 @@ class Block {
     }
     next.tick = tick;
     final included = <Tx>[];
+    var result = next;
     for (final t in txs) {
       if (strict) {
-        await next.apply(t);
+        await result.apply(t);
         included.add(t);
         continue;
       }
-      final trial = next.copy();
+      // Apply to a copy and keep it: each transaction is checked once
+      // (a holding proof costs an Argon2id).
+      final trial = result.copy();
       try {
         await trial.apply(t);
-        await next.apply(t);
+        result = trial;
         included.add(t);
       } on ChainError {
         continue;
       }
     }
-    next
+    result
       ..height = state.height + 1
       ..head = '';
-    return (next, included);
+    return (result, included);
   }
 
   /// Builds and signs the next block on [state]. Invalid transactions are
