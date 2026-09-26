@@ -11,6 +11,9 @@ final t0 = DateTime.now();
 String t() => '${(DateTime.now().difference(t0).inSeconds / 60).toStringAsFixed(1)}m'.padLeft(6);
 
 Future<void> main(List<String> args) async {
+  // Something on this machine sends long runs SIGTERM; note it and go on
+  // (Ctrl-C still stops the check).
+  ProcessSignal.sigterm.watch().listen((_) => print('${t()} (ignored a SIGTERM)'));
   final dir = args[0];
   final minutes = int.parse(args[1]);
   final logs = File('$dir/a-i2p.log')..parent.createSync(recursive: true);

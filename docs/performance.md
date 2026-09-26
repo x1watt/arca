@@ -171,6 +171,16 @@ A keeper's mining read is cheap (one 1 KB read per declared partition per tick),
 - Reading receipts cost the reader one Schnorr signature and the server one check per 256 KB delivered, not per chunk; a `HELLO` costs one of each per server per download at most.
 - A phone in light mode checks no proof of storage at all: after each new head it asks a full node for five proven entries (balance, nonce, circle, standing, sync score), a few KB and five signature-free hash checks.
 
+### 3.16 Reachable for ten minutes, then dark
+
+A founder's testnet invite stopped working ten to thirteen minutes after its app started: others' requests went unanswered, while the app itself looked healthy (its chain kept making blocks alone). A desktop instance could not reach it either, and it answered again right after a restart.
+
+Cause, in `i2p-dart`: an inbound gateway was considered dead only when the connection to its router dropped. Keepalives keep that connection up, but the router drops the tunnel itself ten minutes after it was built, and from then on silently discards what arrives for it. The node went on republishing leases for those expired tunnels every four minutes, each claiming ten more minutes.
+
+Fix (`i2p-dart`, `lib/src/i2p_node.dart`): each gateway remembers when it was built; the keepalive builds replacements for gateways older than five and a half minutes, retires the old ones once the new ones stand, and republishes at once; a lease never ends later than its tunnel. Measured with `tool/reach_check.dart` (one node reaching another's profile every three minutes): before, the address went dark at about ten minutes; after, the node rotated its four gateways at 9.6 minutes and stayed reachable (the first request after a rotation took up to a minute while the other side still held the old leases).
+
+> **Rule: a network test must outlast every lifetime in the protocol.** I2P tunnels and leases last ten minutes; every live check so far ran for less, so all of them passed.
+
 ---
 
 ## 4. The heavy jobs and how they are run
