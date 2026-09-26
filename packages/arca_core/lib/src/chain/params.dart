@@ -7,8 +7,9 @@ class ChainParams {
   const ChainParams({
     required this.name,
     required this.partitionChunks,
-    required this.tickSeconds,
+    required this.tickMillis,
     required this.dayTicks,
+    required this.blockTicks,
     required this.packMemoryKiB,
     required this.dailyIssuance,
     required this.halvingDays,
@@ -28,10 +29,21 @@ class ChainParams {
   final int partitionChunks;
   int get partitionBytes => partitionChunks * chunkBytes;
 
-  /// The clock: one tick per [tickSeconds]; a "day" of [dayTicks] ticks
-  /// sets holding proofs, issuance and standing.
-  final int tickSeconds;
+  /// The clock: one tick per [tickMillis]; a "day" of [dayTicks] ticks
+  /// sets holding proofs, issuance and standing. Difficulty aims at one
+  /// block per [blockTicks] ticks.
+  final int tickMillis;
   final int dayTicks;
+  final int blockTicks;
+
+  int get blocksPerDay => dayTicks ~/ blockTicks;
+
+  /// New marcas on [day]: halving every [halvingDays], never below the floor.
+  int issuanceOn(int day) {
+    final halvings = day ~/ halvingDays;
+    final v = halvings >= 62 ? 0 : dailyIssuance >> halvings;
+    return v < floorIssuance ? floorIssuance : v;
+  }
 
   /// Memory of the packing function (Argon2id), per chunk.
   final int packMemoryKiB;
@@ -66,8 +78,9 @@ class ChainParams {
   static const mainnet = ChainParams(
     name: 'arca-mainnet',
     partitionChunks: 131072, // 32 GiB
-    tickSeconds: 1,
+    tickMillis: 1000,
     dayTicks: 86400,
+    blockTicks: 60,
     packMemoryKiB: 65536,
     dailyIssuance: 100000 * grainsPerMarca,
     halvingDays: 4 * 365,
@@ -79,8 +92,9 @@ class ChainParams {
   static const testnet = ChainParams(
     name: 'arca-testnet',
     partitionChunks: 256, // 64 MiB
-    tickSeconds: 1,
+    tickMillis: 1000,
     dayTicks: 600,
+    blockTicks: 10,
     packMemoryKiB: 32768, // 1,355x on the desktop benchmark (8 MB: 408x, 64 MB: 3,050x)
     dailyIssuance: 100000 * grainsPerMarca,
     halvingDays: 30,

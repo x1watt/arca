@@ -66,8 +66,7 @@ class MemoryEventStore implements EventStore {
       final oldId = _current[key];
       final old = oldId == null ? null : _byId[oldId];
       if (old != null) {
-        final newer = e.createdAt > old.createdAt ||
-            (e.createdAt == old.createdAt && e.id.compareTo(old.id) < 0);
+        final newer = e.createdAt > old.createdAt || (e.createdAt == old.createdAt && e.id.compareTo(old.id) < 0);
         if (!newer) return AddResult.olderThanStored;
         _byId.remove(old.id);
         result = AddResult.replacedOlder;
@@ -87,8 +86,7 @@ class MemoryEventStore implements EventStore {
   @override
   Future<List<NostrEvent>> query(List<NostrFilter> filters) async {
     final out = <String, NostrEvent>{};
-    final sorted = _byId.values.toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final sorted = _byId.values.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     for (final f in filters) {
       var n = 0;
       for (final e in sorted) {

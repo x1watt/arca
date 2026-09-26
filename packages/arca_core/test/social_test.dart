@@ -31,8 +31,13 @@ void main() {
   test('follow someone, suggest a change, owner accepts, suggester sees it', () async {
     final net = LoopbackNetwork();
     Future<CoreService> open(String name) async {
-      final c = await CoreService.open('${tmp.path}/$name',
-          cost: VaultCost.test, backend: LoopbackBackend(net), startNetwork: false, defaultBaseFolder: '${tmp.path}/$name/Arca');
+      final c = await CoreService.open(
+        '${tmp.path}/$name',
+        cost: VaultCost.test,
+        backend: LoopbackBackend(net),
+        startNetwork: false,
+        defaultBaseFolder: '${tmp.path}/$name/Arca',
+      );
       await c.net.start();
       return c;
     }
@@ -42,7 +47,10 @@ void main() {
     var sa = await alice.handle('createCollection', {'name': 'Clips'});
     final colId = sa['created'] as String;
     final src = File('${tmp.path}/clip.txt')..writeAsStringSync('hello');
-    sa = await alice.handle('addFiles', {'collection': colId, 'paths': [src.path]});
+    sa = await alice.handle('addFiles', {
+      'collection': colId,
+      'paths': [src.path],
+    });
     final aliceProfile = (sa['profiles'] as List).single as Map;
     final file = ((sa['collections'] as List).single as Map)['files'] as List;
     final sha = (file.single as Map)['sha256'] as String;
@@ -72,7 +80,10 @@ void main() {
 
     sa = await alice.handle('state', {});
     final pending = (sa['proposals'] as List).cast<Map>();
-    expect(pending.single['changes'], {'title': 'Greeting clip', 'tags': ['greeting']});
+    expect(pending.single['changes'], {
+      'title': 'Greeting clip',
+      'tags': ['greeting'],
+    });
 
     // Alice accepts: the file changes and the suggestion leaves the queue.
     sa = await alice.handle('decide', {'id': pending.single['id'], 'accept': true});
@@ -98,8 +109,13 @@ void main() {
 
   test('a suggestion to someone offline fails with a clear message', () async {
     final net = LoopbackNetwork();
-    final bob = await CoreService.open('${tmp.path}/bob',
-        cost: VaultCost.test, backend: LoopbackBackend(net), startNetwork: false, defaultBaseFolder: '${tmp.path}/Arca');
+    final bob = await CoreService.open(
+      '${tmp.path}/bob',
+      cost: VaultCost.test,
+      backend: LoopbackBackend(net),
+      startNetwork: false,
+      defaultBaseFolder: '${tmp.path}/Arca',
+    );
     await bob.net.start();
     final npub = npubEncode(publicKeyOf(generateSecretKey()));
     await bob.handle('follow', {'address': arcaAddress(npub, '${'b' * 52}.b32.i2p')});

@@ -20,12 +20,38 @@ void main() {
       expect(await s.add(p1), AddResult.added);
       expect(await s.add(p2), AddResult.replacedOlder);
       expect(await s.add(p1), AddResult.olderThanStored);
-      final a1 = NostrEvent.sign(secretKey: sk, kind: 30078, content: 'a', createdAt: 5, tags: [['d', 'x']]);
-      final a2 = NostrEvent.sign(secretKey: sk, kind: 30078, content: 'b', createdAt: 5, tags: [['d', 'y']]);
+      final a1 = NostrEvent.sign(
+        secretKey: sk,
+        kind: 30078,
+        content: 'a',
+        createdAt: 5,
+        tags: [
+          ['d', 'x'],
+        ],
+      );
+      final a2 = NostrEvent.sign(
+        secretKey: sk,
+        kind: 30078,
+        content: 'b',
+        createdAt: 5,
+        tags: [
+          ['d', 'y'],
+        ],
+      );
       await s.add(a1);
       await s.add(a2);
-      expect((await s.query([const NostrFilter(kinds: [0])])).single.content, 'v2');
-      expect((await s.query([const NostrFilter(kinds: [30078])])).length, 2);
+      expect(
+        (await s.query([
+          const NostrFilter(kinds: [0]),
+        ])).single.content,
+        'v2',
+      );
+      expect(
+        (await s.query([
+          const NostrFilter(kinds: [30078]),
+        ])).length,
+        2,
+      );
     });
 
     test('an author can delete their own events, not others\'', () async {
@@ -35,7 +61,17 @@ void main() {
       final b = NostrEvent.sign(secretKey: bob, kind: 1, content: 'b');
       await s.add(a);
       await s.add(b);
-      await s.add(NostrEvent.sign(secretKey: alice, kind: 5, content: '', tags: [['e', a.id], ['e', b.id]]));
+      await s.add(
+        NostrEvent.sign(
+          secretKey: alice,
+          kind: 5,
+          content: '',
+          tags: [
+            ['e', a.id],
+            ['e', b.id],
+          ],
+        ),
+      );
       expect(await s.byId(a.id), isNull);
       expect(await s.byId(b.id), isNotNull);
       expect(await s.add(a), AddResult.deleted);
@@ -52,7 +88,12 @@ void main() {
       await s.close();
       s = await FileEventStore.open(f);
       expect(await s.count(), 2);
-      expect((await s.query([const NostrFilter(kinds: [0])])).single.content, 'new');
+      expect(
+        (await s.query([
+          const NostrFilter(kinds: [0]),
+        ])).single.content,
+        'new',
+      );
       await s.close();
       await dir.delete(recursive: true);
     });
@@ -62,18 +103,22 @@ void main() {
     test('pushes new events to live subscriptions until they expire', () async {
       var now = DateTime(2026);
       final sent = <(String, NostrMessage)>[];
-      final relay = NostrRelay(
-        store: MemoryEventStore(),
-        reply: (to, m) async => sent.add((to, m)),
-        clock: () => now,
+      final relay = NostrRelay(store: MemoryEventStore(), reply: (to, m) async => sent.add((to, m)), clock: () => now);
+      await relay.handle(
+        'peer',
+        const ReqMessage('live', [
+          NostrFilter(kinds: [1]),
+        ]),
       );
-      await relay.handle('peer', const ReqMessage('live', [NostrFilter(kinds: [1])]));
       expect(sent.last.$2, isA<EoseMessage>());
       final e = NostrEvent.sign(secretKey: generateSecretKey(), kind: 1, content: 'fresh');
       await relay.handle('author', EventMessage(e));
       expect(sent.where((s) => s.$1 == 'peer' && s.$2 is SubscriptionEvent).length, 1);
       now = now.add(const Duration(minutes: 11));
-      await relay.handle('author', EventMessage(NostrEvent.sign(secretKey: generateSecretKey(), kind: 1, content: 'later')));
+      await relay.handle(
+        'author',
+        EventMessage(NostrEvent.sign(secretKey: generateSecretKey(), kind: 1, content: 'later')),
+      );
       expect(sent.where((s) => s.$1 == 'peer' && s.$2 is SubscriptionEvent).length, 1, reason: 'expired');
       expect(relay.liveSubscriptions, 0);
     });
@@ -86,21 +131,30 @@ void main() {
 
     setUp(() {
       net = LoopbackNetwork();
-      NostrNode node(String addr) =>
-          NostrNode(address: addr, link: net.link([addr]), store: MemoryEventStore());
+      NostrNode node(String addr) => NostrNode(address: addr, link: net.link([addr]), store: MemoryEventStore());
       alice = node('alice.b32.i2p');
       owner = node('owner.b32.i2p');
       circleRelay = node('relay.b32.i2p');
     });
 
     test('a comment published to the owner can be read back by anyone', () async {
-      final c = NostrEvent.sign(secretKey: aliceKey, kind: Kind.comment, content: 'nice guide', tags: [
-        ['I', 'arca:sha256:aa'],
-      ]);
+      final c = NostrEvent.sign(
+        secretKey: aliceKey,
+        kind: Kind.comment,
+        content: 'nice guide',
+        tags: [
+          ['I', 'arca:sha256:aa'],
+        ],
+      );
       final r = await alice.publish('owner.b32.i2p', c);
       expect(r.accepted, isTrue);
       final got = await circleRelay.query('owner.b32.i2p', [
-        const NostrFilter(kinds: [Kind.comment], tags: {'I': ['arca:sha256:aa']}),
+        const NostrFilter(
+          kinds: [Kind.comment],
+          tags: {
+            'I': ['arca:sha256:aa'],
+          },
+        ),
       ]);
       expect(got.single.id, c.id);
     });
@@ -110,7 +164,9 @@ void main() {
       await alice.relay.publishLocal(note);
       expect((await alice.publish('relay.b32.i2p', note)).accepted, isTrue);
       net.setOnline('alice.b32.i2p', false);
-      final got = await owner.query('relay.b32.i2p', [NostrFilter(authors: [note.pubkey])]);
+      final got = await owner.query('relay.b32.i2p', [
+        NostrFilter(authors: [note.pubkey]),
+      ]);
       expect(got.single.content, 'hello circle');
     });
 
@@ -138,11 +194,15 @@ void main() {
     });
 
     test('a finished query leaves no subscription behind, and later events show up', () async {
-      await owner.query('relay.b32.i2p', [const NostrFilter(kinds: [1])]);
+      await owner.query('relay.b32.i2p', [
+        const NostrFilter(kinds: [1]),
+      ]);
       final n = NostrEvent.sign(secretKey: aliceKey, kind: 1, content: 'late');
       await alice.publish('relay.b32.i2p', n);
       expect(circleRelay.relay.liveSubscriptions, 0, reason: 'query closes its subscription');
-      final again = await owner.query('relay.b32.i2p', [const NostrFilter(kinds: [1])]);
+      final again = await owner.query('relay.b32.i2p', [
+        const NostrFilter(kinds: [1]),
+      ]);
       expect(again.map((e) => e.content), contains('late'));
     });
 

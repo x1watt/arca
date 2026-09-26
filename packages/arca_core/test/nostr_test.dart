@@ -46,9 +46,14 @@ void main() {
 
     test('signed events verify, and any change breaks them', () {
       final sk = generateSecretKey();
-      final e = NostrEvent.sign(secretKey: sk, kind: Kind.comment, content: 'hello', tags: [
-        ['I', 'arca:sha256:00'],
-      ]);
+      final e = NostrEvent.sign(
+        secretKey: sk,
+        kind: Kind.comment,
+        content: 'hello',
+        tags: [
+          ['I', 'arca:sha256:00'],
+        ],
+      );
       expect(e.pubkey, toHex(publicKeyOf(sk)));
       expect(e.verify(), isTrue);
       final json = e.toJson();
@@ -73,21 +78,47 @@ void main() {
 
   group('filters', () {
     final sk = generateSecretKey();
-    final e = NostrEvent.sign(secretKey: sk, kind: 1111, content: 'x', createdAt: 100, tags: [
-      ['I', 'arca:sha256:aa'],
-    ]);
+    final e = NostrEvent.sign(
+      secretKey: sk,
+      kind: 1111,
+      content: 'x',
+      createdAt: 100,
+      tags: [
+        ['I', 'arca:sha256:aa'],
+      ],
+    );
 
     test('match on authors, kinds, tags and time', () {
       expect(NostrFilter(authors: [e.pubkey]).matches(e), isTrue);
       expect(const NostrFilter(kinds: [1]).matches(e), isFalse);
-      expect(const NostrFilter(tags: {'I': ['arca:sha256:aa']}).matches(e), isTrue);
-      expect(const NostrFilter(tags: {'I': ['arca:sha256:bb']}).matches(e), isFalse);
+      expect(
+        const NostrFilter(
+          tags: {
+            'I': ['arca:sha256:aa'],
+          },
+        ).matches(e),
+        isTrue,
+      );
+      expect(
+        const NostrFilter(
+          tags: {
+            'I': ['arca:sha256:bb'],
+          },
+        ).matches(e),
+        isFalse,
+      );
       expect(const NostrFilter(since: 101).matches(e), isFalse);
       expect(const NostrFilter(until: 100).matches(e), isTrue);
     });
 
     test('round trip through JSON', () {
-      const f = NostrFilter(kinds: [1111], tags: {'I': ['x']}, limit: 5);
+      const f = NostrFilter(
+        kinds: [1111],
+        tags: {
+          'I': ['x'],
+        },
+        limit: 5,
+      );
       final back = NostrFilter.fromJson(f.toJson());
       expect(back.kinds, [1111]);
       expect(back.tags['I'], ['x']);
@@ -102,7 +133,9 @@ void main() {
       for (final m in <NostrMessage>[
         EventMessage(e),
         SubscriptionEvent('s1', e),
-        const ReqMessage('s1', [NostrFilter(kinds: [1])]),
+        const ReqMessage('s1', [
+          NostrFilter(kinds: [1]),
+        ]),
         const CloseMessage('s1'),
         const EoseMessage('s1'),
         OkMessage(e.id, true, ''),

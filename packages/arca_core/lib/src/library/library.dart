@@ -163,9 +163,7 @@ class Collection {
     folder: m['folder'] as String,
     createdAt: m['createdAt'] as int,
     cover: m['cover'] as String?,
-    moderators: [
-      for (final x in m['moderators'] as List? ?? const []) (x as Map).cast<String, String>(),
-    ],
+    moderators: [for (final x in m['moderators'] as List? ?? const []) (x as Map).cast<String, String>()],
     applied: (m['applied'] as List?)?.cast<String>().toList(),
     files: [for (final f in m['files'] as List) LibraryFile.fromJson(f as Map<String, dynamic>)],
   );

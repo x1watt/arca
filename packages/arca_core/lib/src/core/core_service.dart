@@ -81,6 +81,7 @@ class CoreService {
       _tasks.remove(f);
     });
   }
+
   final _foldAgain = <String>{};
   String? _subtitleSha;
   String _subtitleName = '';
@@ -217,8 +218,7 @@ class CoreService {
     // The newest applied changes by name; older ones are covered by the
     // watermark, so the head stays one message however long its history.
     final applied = [
-      for (final e in col.applied)
-        (e.split('@').first, int.tryParse(e.contains('@') ? e.split('@').last : '') ?? 0),
+      for (final e in col.applied) (e.split('@').first, int.tryParse(e.contains('@') ? e.split('@').last : '') ?? 0),
     ]..sort((a, b) => b.$2.compareTo(a.$2));
     final named = applied.take(maxAppliedIds).toList();
     await _publishLocal(id, Kind.arcaCollection, content, [
@@ -529,14 +529,9 @@ class CoreService {
     final lib = await _library(profileId);
     final follows = (await _followStore(profileId)).follows;
     final byId = {for (final e in incoming) e.id: e};
-    final decided = <String>{
-      for (final f in follows) ...f.decisions.keys.where(byId.containsKey),
-    };
+    final decided = <String>{for (final f in follows) ...f.decisions.keys.where(byId.containsKey)};
     for (final r in await store.query([
-      NostrFilter(
-        kinds: const [Kind.reaction],
-        tags: {'e': byId.keys.toList()},
-      ),
+      NostrFilter(kinds: const [Kind.reaction], tags: {'e': byId.keys.toList()}),
     ])) {
       final target = r.tagValues('e').firstWhere(byId.containsKey, orElse: () => '');
       if (target.isEmpty) continue;
@@ -896,7 +891,10 @@ class CoreService {
           );
           final node = net.nodeOf(_activeId);
           if (node == null) return {'error': 'Your profile is not online on I2P, so the suggestion could not be sent.'};
-          final targets = [f.address, for (final x in moderators) x['address'] as String? ?? ''].where((a) => a.isNotEmpty);
+          final targets = [
+            f.address,
+            for (final x in moderators) x['address'] as String? ?? '',
+          ].where((a) => a.isNotEmpty);
           var delivered = false;
           String? refusal;
           final missed = <String>[];
@@ -963,9 +961,16 @@ class CoreService {
             final f = fs.byPubkey(owner);
             if (f == null) return {'error': 'You do not follow the admin of that collection.'};
             if (accept) {
-              final error = await _moderate(_activeId, f, collection, [
-                {'op': 'edit', 'path': proposal['path'], 'sha256': proposal['sha256'], ...ch},
-              ], const [], acceptsProposal: id);
+              final error = await _moderate(
+                _activeId,
+                f,
+                collection,
+                [
+                  {'op': 'edit', 'path': proposal['path'], 'sha256': proposal['sha256'], ...ch},
+                ],
+                const [],
+                acceptsProposal: id,
+              );
               if (error != null) return {'error': error};
             }
             final r = await _publishLocal(_activeId, Kind.reaction, accept ? '+' : '-', [
@@ -1009,13 +1014,9 @@ class CoreService {
           final fs = await _followStore(_activeId);
           final f = fs.byPubkey(args['owner'] as String);
           if (f == null) return {'error': 'You do not follow the admin of that collection.'};
-          final error = await _moderate(
-            _activeId,
-            f,
-            args['collection'] as String,
-            [for (final o in args['ops'] as List? ?? const []) (o as Map).cast<String, Object?>()],
-            (args['addPaths'] as List?)?.cast<String>() ?? const [],
-          );
+          final error = await _moderate(_activeId, f, args['collection'] as String, [
+            for (final o in args['ops'] as List? ?? const []) (o as Map).cast<String, Object?>(),
+          ], (args['addPaths'] as List?)?.cast<String>() ?? const []);
           if (error != null) return {'error': error};
         case 'downloadModel':
           final m = modelById(args['id'] as String?);

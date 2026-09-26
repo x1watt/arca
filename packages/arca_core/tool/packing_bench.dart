@@ -21,7 +21,8 @@ Future<void> main(List<String> args) async {
     final params = ChainParams(
       name: 'bench',
       partitionChunks: chunks,
-      tickSeconds: 1,
+      tickMillis: 1000,
+      blockTicks: 1,
       dayTicks: 1,
       packMemoryKiB: mem,
       dailyIssuance: 0,

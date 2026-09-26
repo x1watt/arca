@@ -68,25 +68,11 @@ class NostrEvent {
     final at = createdAt ?? DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final id = computeId(pubkey, at, kind, tags, content);
     final sig = toHex(schnorrSign(secretKey, fromHex(id)));
-    return NostrEvent(
-      id: id,
-      pubkey: pubkey,
-      createdAt: at,
-      kind: kind,
-      tags: tags,
-      content: content,
-      sig: sig,
-    );
+    return NostrEvent(id: id, pubkey: pubkey, createdAt: at, kind: kind, tags: tags, content: content, sig: sig);
   }
 
   /// The NIP-01 id: SHA-256 of `[0, pubkey, created_at, kind, tags, content]`.
-  static String computeId(
-    String pubkey,
-    int createdAt,
-    int kind,
-    List<List<String>> tags,
-    String content,
-  ) {
+  static String computeId(String pubkey, int createdAt, int kind, List<List<String>> tags, String content) {
     final serialized = jsonEncode([0, pubkey, createdAt, kind, tags, content]);
     return c.sha256.convert(utf8.encode(serialized)).toString();
   }
@@ -99,8 +85,7 @@ class NostrEvent {
   }
 
   /// Values of tags named [name], for example all `e` or `I` tags.
-  Iterable<String> tagValues(String name) =>
-      tags.where((t) => t.length > 1 && t[0] == name).map((t) => t[1]);
+  Iterable<String> tagValues(String name) => tags.where((t) => t.length > 1 && t[0] == name).map((t) => t[1]);
 
   /// Replaceable (NIP-01): kinds 0, 3 and 10000 to 19999.
   bool get isReplaceable => kind == 0 || kind == 3 || (kind >= 10000 && kind < 20000);

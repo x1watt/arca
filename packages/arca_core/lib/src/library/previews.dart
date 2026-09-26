@@ -67,8 +67,21 @@ class VideoPreviews {
     // The still: a frame a tenth of the way in, past intros and black frames.
     final stillTmp = File('$dir/$sha256.tmp.jpg');
     final s = await Process.run(ffmpeg, [
-      '-nostdin', '-v', 'error', '-y', '-ss', (duration * 0.1).toStringAsFixed(2), '-i', path,
-      '-frames:v', '1', '-vf', 'scale=640:-2', '-q:v', '4', stillTmp.path,
+      '-nostdin',
+      '-v',
+      'error',
+      '-y',
+      '-ss',
+      (duration * 0.1).toStringAsFixed(2),
+      '-i',
+      path,
+      '-frames:v',
+      '1',
+      '-vf',
+      'scale=640:-2',
+      '-q:v',
+      '4',
+      stillTmp.path,
     ]);
     if (s.exitCode != 0 || !await stillTmp.exists()) return false;
     await stillTmp.rename(still(sha256).path);
@@ -81,16 +94,38 @@ class VideoPreviews {
       for (var i = 0; i < count; i++) {
         final t = duration * (i + 0.5) / count;
         await Process.run(ffmpeg, [
-          '-nostdin', '-v', 'error', '-y', '-ss', t.toStringAsFixed(2), '-i', path,
-          '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5',
+          '-nostdin',
+          '-v',
+          'error',
+          '-y',
+          '-ss',
+          t.toStringAsFixed(2),
+          '-i',
+          path,
+          '-frames:v',
+          '1',
+          '-vf',
+          'scale=480:-2',
+          '-q:v',
+          '5',
           '${frames.path}/f${i.toString().padLeft(2, '0')}.jpg',
         ]);
       }
       final gifTmp = File('$dir/$sha256.tmp.gif');
       final g = await Process.run(ffmpeg, [
-        '-nostdin', '-v', 'error', '-y', '-framerate', '2', '-i', '${frames.path}/f%02d.jpg',
-        '-vf', 'split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer',
-        '-loop', '0', gifTmp.path,
+        '-nostdin',
+        '-v',
+        'error',
+        '-y',
+        '-framerate',
+        '2',
+        '-i',
+        '${frames.path}/f%02d.jpg',
+        '-vf',
+        'split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer',
+        '-loop',
+        '0',
+        gifTmp.path,
       ]);
       if (g.exitCode != 0 || !await gifTmp.exists()) return false;
       await gifTmp.rename(animated(sha256).path);
@@ -102,7 +137,13 @@ class VideoPreviews {
 
   Future<double?> _duration(String path) async {
     final r = await Process.run(ffprobe, [
-      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nokey=1:noprint_wrappers=1', path,
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=nokey=1:noprint_wrappers=1',
+      path,
     ]);
     if (r.exitCode != 0) return null;
     return double.tryParse((r.stdout as String).trim());

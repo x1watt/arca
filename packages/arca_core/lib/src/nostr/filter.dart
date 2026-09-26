@@ -3,15 +3,7 @@
 import 'event.dart';
 
 class NostrFilter {
-  const NostrFilter({
-    this.ids,
-    this.authors,
-    this.kinds,
-    this.tags = const {},
-    this.since,
-    this.until,
-    this.limit,
-  });
+  const NostrFilter({this.ids, this.authors, this.kinds, this.tags = const {}, this.since, this.until, this.limit});
 
   final List<String>? ids;
   final List<String>? authors;

@@ -154,6 +154,15 @@ The whitepaper wants making a packed slice on demand to cost 1,000 to 10,000 tim
 
 Not measured yet: the same on the C61 phone, and a native RandomX for comparison.
 
+### 3.15 Checking a proof costs one Argon2id
+
+A steward's mining read is cheap (one 1 KB read per declared partition per tick), but every node that checks a block or a holding proof recomputes the steward's keystream for that chunk: one Argon2id, 146 ms with the testnet's 32 MB and 264 ms with mainnet's 64 MB on this desktop, and more on a phone. Rules that follow:
+
+- A node checks each block once: the resulting state is kept with the block, and a block seen again is dropped by its hash before any work.
+- Holding proofs arrive as a burst early each day (one per declared partition per steward). Checking them must never run on the UI isolate, and when the chain node moves into the core it must not block the core isolate either: proof checks go to a worker, like transcription (4.1), with the core only handing over the proof and taking back the verdict.
+- Phones will not check every proof; they follow headers and fraud proofs (milestone 6).
+- Chain traffic is bounded: a node asks one peer per block interval for news, a `get` is answered with at most 64 blocks, and a burst of orphans from one peer asks once per tick. Catching up after a long absence takes several rounds by design, not one flood.
+
 ---
 
 ## 4. The heavy jobs and how they are run

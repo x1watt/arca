@@ -12,56 +12,59 @@ void main() {
   String pk(List<int> k) => toHex(publicKeyOf(k));
   ChainState genesis() => ChainState.genesis(p, allocations: {pk(alice): 10000 * m});
 
-  test('transfers move marcas; nonces stop replays; overspends and forgeries fail', () {
+  test('transfers move marcas; nonces stop replays; overspends and forgeries fail', () async {
     final s = genesis();
     final t = Tx.sign(alice, TxType.transfer, 0, {'to': pk(bob), 'amount': 250 * m});
-    s.apply(t);
+    await s.apply(t);
     expect(s.balanceOf(pk(bob)), 250 * m);
     expect(s.balanceOf(pk(alice)), 9750 * m);
-    expect(() => s.apply(t), throwsA(isA<ChainError>()), reason: 'replayed');
-    expect(
+    await expectLater(() => s.apply(t), throwsA(isA<ChainError>()), reason: 'replayed');
+    await expectLater(
       () => s.apply(Tx.sign(bob, TxType.transfer, 0, {'to': pk(alice), 'amount': 251 * m})),
       throwsA(predicate((e) => '$e'.contains('balance'))),
     );
     final forged = Tx(type: t.type, from: pk(alice), nonce: 1, body: {'to': pk(bob), 'amount': 1}, sig: t.sig);
-    expect(() => s.apply(forged), throwsA(predicate((e) => '$e'.contains('signature'))));
+    await expectLater(() => s.apply(forged), throwsA(predicate((e) => '$e'.contains('signature'))));
   });
 
-  test('creating a circle burns the fee; only its admin sets moderators; admin and moderators anchor', () {
+  test('creating a circle burns the fee; only its admin sets moderators; admin and moderators anchor', () async {
     final s = genesis();
-    s.apply(Tx.sign(alice, TxType.createCircle, 0, {'circle': 'radio-archive', 'name': 'Radio archive'}));
+    await s.apply(Tx.sign(alice, TxType.createCircle, 0, {'circle': 'radio-archive', 'name': 'Radio archive'}));
     expect(s.burned, p.circleFee);
     expect(s.balanceOf(pk(alice)), 10000 * m - p.circleFee);
-    expect(
+    await expectLater(
       () => s.apply(Tx.sign(alice, TxType.createCircle, 1, {'circle': 'radio-archive'})),
       throwsA(isA<ChainError>()),
     );
-    s.apply(
+    await s.apply(
       Tx.sign(alice, TxType.anchor, 1, {
         'circle': 'radio-archive',
         'logHead': 'h1',
         'moderators': [pk(bob)],
       }),
     );
-    s.apply(Tx.sign(bob, TxType.anchor, 0, {'circle': 'radio-archive', 'logHead': 'h2'}));
+    await s.apply(Tx.sign(bob, TxType.anchor, 0, {'circle': 'radio-archive', 'logHead': 'h2'}));
     expect(s.circles['radio-archive']!.logHead, 'h2');
-    expect(
+    await expectLater(
       () => s.apply(Tx.sign(bob, TxType.anchor, 1, {'circle': 'radio-archive', 'moderators': <String>[]})),
       throwsA(predicate((e) => '$e'.contains('only the admin'))),
     );
-    expect(() => s.apply(Tx.sign(producer, TxType.anchor, 0, {'circle': 'radio-archive'})), throwsA(isA<ChainError>()));
+    await expectLater(
+      () => s.apply(Tx.sign(producer, TxType.anchor, 0, {'circle': 'radio-archive'})),
+      throwsA(isA<ChainError>()),
+    );
   });
 
-  test('stewards declare and drop partitions for a circle', () {
+  test('stewards declare and drop partitions for a circle', () async {
     final s = genesis()..apply(Tx.sign(alice, TxType.createCircle, 0, {'circle': 'commons'}));
-    s.apply(
+    await s.apply(
       Tx.sign(bob, TxType.declare, 0, {
         'circle': 'commons',
         'partitions': [0, 3],
       }),
     );
     expect(s.declarations[pk(bob)], {0: 'commons', 3: 'commons'});
-    s.apply(
+    await s.apply(
       Tx.sign(bob, TxType.undeclare, 1, {
         'partitions': [0, 3],
       }),
@@ -69,14 +72,14 @@ void main() {
     expect(s.declarations.containsKey(pk(bob)), isFalse);
   });
 
-  test('every node that applies the same blocks holds the same state root', () {
+  test('every node that applies the same blocks holds the same state root', () async {
     var a = genesis(), b = genesis();
     for (var h = 1; h <= 3; h++) {
-      final block = Block.produce(a, producer, [
+      final block = await Block.produce(a, producer, [
         Tx.sign(alice, TxType.transfer, h - 1, {'to': pk(bob), 'amount': h * m}),
       ], tick: h * 10);
-      a = block.applyTo(a);
-      b = Block.fromJson(block.toJson()).applyTo(b);
+      a = await block.applyTo(a);
+      b = await Block.fromJson(block.toJson()).applyTo(b);
       expect(b.rootHex, a.rootHex);
       expect(b.head, a.head);
     }
@@ -84,15 +87,18 @@ void main() {
     expect(a.height, 3);
   });
 
-  test('tampered blocks are rejected', () {
+  test('tampered blocks are rejected', () async {
     final s = genesis();
-    final block = Block.produce(s, producer, [
+    final block = await Block.produce(s, producer, [
       Tx.sign(alice, TxType.transfer, 0, {'to': pk(bob), 'amount': m}),
     ], tick: 5);
     Block change(Map<String, Object?> Function(Map<String, Object?>) f) => Block.fromJson(f(block.toJson()));
     // A different state than the one the transactions produce.
-    final evilState = Block.produce(s, producer, const [], tick: 5);
-    expect(() => change((j) => {...j, 'stateRoot': evilState.stateRoot}).applyTo(s), throwsA(isA<ChainError>()));
+    final evilState = await Block.produce(s, producer, const [], tick: 5);
+    await expectLater(
+      () => change((j) => {...j, 'stateRoot': evilState.stateRoot}).applyTo(s),
+      throwsA(isA<ChainError>()),
+    );
     // A transaction slipped in after signing.
     expect(
       () => change(
@@ -107,8 +113,8 @@ void main() {
       throwsA(isA<ChainError>()),
     );
     // Not following the head, and a bad signature.
-    expect(() => change((j) => {...j, 'prev': 'ff'}).applyTo(s), throwsA(isA<ChainError>()));
-    expect(() => change((j) => {...j, 'producer': pk(bob)}).applyTo(s), throwsA(isA<ChainError>()));
-    expect(block.applyTo(s).height, 1);
+    await expectLater(() => change((j) => {...j, 'prev': 'ff'}).applyTo(s), throwsA(isA<ChainError>()));
+    await expectLater(() => change((j) => {...j, 'producer': pk(bob)}).applyTo(s), throwsA(isA<ChainError>()));
+    expect((await block.applyTo(s)).height, 1);
   });
 }

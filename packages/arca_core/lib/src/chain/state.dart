@@ -9,6 +9,7 @@ import 'dart:typed_data';
 
 import '../crypto/hex.dart';
 import 'merkle.dart';
+import 'mining.dart';
 import 'params.dart';
 import 'tx.dart';
 
@@ -77,6 +78,29 @@ class ChainState {
   int burned = 0;
   int issued = 0;
 
+  /// The corpus stewards prove against: its root and chunks per partition.
+  /// Empty until set (then blocks need no mining proof, as at genesis).
+  String corpusRoot = '';
+  List<int> partitionSizes = [];
+
+  /// Mining difficulty: a block's proof quality must be below it.
+  BigInt target = maxTarget;
+
+  /// The current day and its beacon (the last block of the day before),
+  /// which picks each steward's slices for the day's holding proofs.
+  int day = 0;
+  String beacon = '';
+
+  /// The tick of genesis: days count from here.
+  int genesisTick = 0;
+
+  int dayOf(int tick) => tick < genesisTick ? 0 : (tick - genesisTick) ~/ params.dayTicks;
+
+  /// Steward to (partition to the day it was declared), and to the day of
+  /// its last holding proof.
+  final declaredOn = <String, Map<int, int>>{};
+  final provenOn = <String, Map<int, int>>{};
+
   int balanceOf(String key) => balances[key] ?? 0;
 
   /// A testnet genesis: initial balances (a faucet) and the genesis circle.
@@ -84,8 +108,15 @@ class ChainState {
     ChainParams params, {
     Map<String, int> allocations = const {},
     Map<String, CircleState> circles = const {},
+    String corpusRoot = '',
+    List<int> partitionSizes = const [],
+    int genesisTick = 0,
   }) {
-    final s = ChainState(params);
+    final s = ChainState(params)
+      ..genesisTick = genesisTick
+      ..tick = genesisTick
+      ..corpusRoot = corpusRoot
+      ..partitionSizes = [...partitionSizes];
     s.balances.addAll(allocations);
     s.issued = allocations.values.fold(0, (a, b) => a + b);
     s.circles.addAll(circles);
@@ -98,7 +129,15 @@ class ChainState {
       ..tick = tick
       ..head = head
       ..burned = burned
-      ..issued = issued;
+      ..issued = issued
+      ..corpusRoot = corpusRoot
+      ..partitionSizes = [...partitionSizes]
+      ..target = target
+      ..day = day
+      ..beacon = beacon
+      ..genesisTick = genesisTick;
+    declaredOn.forEach((k, v) => s.declaredOn[k] = Map.of(v));
+    provenOn.forEach((k, v) => s.provenOn[k] = Map.of(v));
     s.balances.addAll(balances);
     s.nonces.addAll(nonces);
     circles.forEach((k, v) => s.circles[k] = v.copy());
@@ -108,9 +147,10 @@ class ChainState {
 
   /// Applies [tx] or throws [ChainError] and leaves the state as it was
   /// only if the caller works on a copy (blocks do).
-  void apply(Tx tx) {
+  Future<void> apply(Tx tx) async {
     if (!tx.verify()) throw const ChainError('bad signature');
-    final expected = nonces[tx.from] ?? 0;
+    final numbered = TxType.numbered(tx.type);
+    final expected = numbered ? nonces[tx.from] ?? 0 : 0;
     if (tx.nonce != expected) throw ChainError('nonce ${tx.nonce}, expected $expected');
     final b = tx.body;
     switch (tx.type) {
@@ -149,21 +189,62 @@ class ChainState {
         if (!circles.containsKey(circle)) throw const ChainError('no such circle');
         final parts = (b['partitions'] as List? ?? const []).cast<int>();
         if (parts.isEmpty || parts.any((p) => p < 0)) throw const ChainError('bad partitions');
+        if (partitionSizes.isNotEmpty && parts.any((p) => p >= partitionSizes.length)) {
+          throw const ChainError('no such partition');
+        }
         final mine = declarations.putIfAbsent(tx.from, () => {});
+        final since = declaredOn.putIfAbsent(tx.from, () => {});
         for (final p in parts) {
           mine[p] = circle;
+          since[p] = day;
         }
       case TxType.undeclare:
         final parts = (b['partitions'] as List? ?? const []).cast<int>();
         final mine = declarations[tx.from];
         for (final p in parts) {
           mine?.remove(p);
+          declaredOn[tx.from]?.remove(p);
         }
-        if (mine != null && mine.isEmpty) declarations.remove(tx.from);
+        if (mine != null && mine.isEmpty) {
+          declarations.remove(tx.from);
+          declaredOn.remove(tx.from);
+        }
+      case TxType.holdingProof:
+        final proof = SliceProof.fromJson(b['proof'] as Map);
+        if (proof.steward != tx.from) throw const ChainError('a steward proves only its own keeping');
+        if (declarations[tx.from]?[proof.partition] != proof.circle) throw const ChainError('partition not declared');
+        if ((b['day'] as int?) != day) throw const ChainError('a holding proof is for the current day');
+        final why = await proof.check(
+          params,
+          holdChallenge(beacon, day, tx.from, proof.partition),
+          corpusRoot,
+          partitionSizes,
+        );
+        if (why != null) throw ChainError('bad holding proof: $why');
+        provenOn.putIfAbsent(tx.from, () => {})[proof.partition] = day;
       default:
         throw ChainError('unknown transaction ${tx.type}');
     }
-    nonces[tx.from] = expected + 1;
+    if (numbered) nonces[tx.from] = expected + 1;
+  }
+
+  /// Closes the current day and opens [newDay]: every steward must have
+  /// proven each partition it declared before the day began, or loses all
+  /// its declarations (whitepaper, section 7).
+  void startDay(int newDay) {
+    if (newDay <= day) return;
+    for (final steward in declarations.keys.toList()) {
+      final since = declaredOn[steward] ?? const {};
+      final proven = provenOn[steward] ?? const {};
+      final missed = declarations[steward]!.keys.any((p) => (since[p] ?? day) < day && proven[p] != day);
+      if (missed) {
+        declarations.remove(steward);
+        declaredOn.remove(steward);
+        provenOn.remove(steward);
+      }
+    }
+    day = newDay;
+    beacon = head;
   }
 
   void _spend(String from, int amount) {
@@ -181,7 +262,11 @@ class ChainState {
       for (final k in (circles.keys.toList()..sort())) 'c:$k:${canonicalJson(circles[k]!.toJson())}',
       for (final k in (declarations.keys.toList()..sort()))
         'd:$k:${canonicalJson({for (final e in declarations[k]!.entries) '${e.key}': e.value})}',
-      't:$height:$tick:$burned:$issued',
+      for (final k in (declaredOn.keys.toList()..sort()))
+        's:$k:${canonicalJson({for (final e in declaredOn[k]!.entries) '${e.key}': e.value})}',
+      for (final k in (provenOn.keys.toList()..sort()))
+        'p:$k:${canonicalJson({for (final e in provenOn[k]!.entries) '${e.key}': e.value})}',
+      't:$height:$tick:$burned:$issued:$day:$beacon:$target:$corpusRoot:${partitionSizes.join(',')}:$genesisTick',
     ];
     return merkleRoot([for (final e in entries) leafHash(utf8.encode(e))]);
   }

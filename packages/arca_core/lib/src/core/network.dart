@@ -192,7 +192,8 @@ class NetworkManager {
     }
     if (!ok) {
       state = NetState.failed;
-      error ??= 'The I2P node could not start. Check the internet connection; the first start downloads the list of routers.';
+      error ??=
+          'The I2P node could not start. Check the internet connection; the first start downloads the list of routers.';
       onChange?.call();
       return;
     }
@@ -239,11 +240,7 @@ class NetworkManager {
         onChange?.call();
       },
     );
-    _blobs[p.id] = BlobService(
-      address: address,
-      link: backend.link,
-      resolve: p.resolve ?? (_) async => null,
-    );
+    _blobs[p.id] = BlobService(address: address, link: backend.link, resolve: p.resolve ?? (_) async => null);
   }
 
   /// Until circles and collections exist, a profile's relay keeps its own

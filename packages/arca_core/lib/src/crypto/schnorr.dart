@@ -9,22 +9,10 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as c;
 
-final BigInt _p = BigInt.parse(
-  'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F',
-  radix: 16,
-);
-final BigInt _n = BigInt.parse(
-  'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141',
-  radix: 16,
-);
-final BigInt _gx = BigInt.parse(
-  '79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798',
-  radix: 16,
-);
-final BigInt _gy = BigInt.parse(
-  '483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8',
-  radix: 16,
-);
+final BigInt _p = BigInt.parse('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F', radix: 16);
+final BigInt _n = BigInt.parse('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141', radix: 16);
+final BigInt _gx = BigInt.parse('79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798', radix: 16);
+final BigInt _gy = BigInt.parse('483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8', radix: 16);
 final BigInt _sqrtExp = (_p + BigInt.one) >> 2;
 final BigInt _two = BigInt.two;
 final BigInt _three = BigInt.from(3);
@@ -194,12 +182,7 @@ bool schnorrVerify(List<int> publicKey, List<int> message, List<int> signature) 
   final r = _int(signature.sublist(0, 32));
   final s = _int(signature.sublist(32));
   if (r >= _p || s >= _n) return false;
-  final e = _int(_taggedHash('BIP0340/challenge', [
-        ...signature.sublist(0, 32),
-        ...publicKey,
-        ...message,
-      ])) %
-      _n;
+  final e = _int(_taggedHash('BIP0340/challenge', [...signature.sublist(0, 32), ...publicKey, ...message])) % _n;
   final rPoint = _add(_mul(_g, s), _mul(p, (_n - e) % _n));
   final rAff = _affine(rPoint);
   if (rAff == null) return false;

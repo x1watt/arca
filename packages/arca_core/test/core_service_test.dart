@@ -37,7 +37,12 @@ void main() {
 
   test('online profiles get a relay on the network, and reach each other', () async {
     final net = LoopbackNetwork();
-    final core = await CoreService.open(dir.path, cost: VaultCost.test, backend: LoopbackBackend(net), startNetwork: false);
+    final core = await CoreService.open(
+      dir.path,
+      cost: VaultCost.test,
+      backend: LoopbackBackend(net),
+      startNetwork: false,
+    );
     await core.net.start();
     var s = await core.handle('state', {});
     final first = (s['profiles'] as List).single as Map;
@@ -54,7 +59,9 @@ void main() {
     await core.handle('rename', {'id': first['id'], 'name': 'Max'});
     final a = core.net.nodeOf(first['id'] as String)!;
     final b = core.net.nodeOf(second['id'] as String)!;
-    final got = await b.query(a.address, [const NostrFilter(kinds: [0])]);
+    final got = await b.query(a.address, [
+      const NostrFilter(kinds: [0]),
+    ]);
     expect(got.single.content, '{"name":"Max"}');
     expect(got.single.verify(), isTrue);
 
@@ -70,8 +77,12 @@ void main() {
   });
 
   test('starts in Arca Commons, creates collections, adds files, and comments', () async {
-    final core = await CoreService.open(dir.path,
-        cost: VaultCost.test, startNetwork: false, defaultBaseFolder: '${dir.path}/Arca');
+    final core = await CoreService.open(
+      dir.path,
+      cost: VaultCost.test,
+      startNetwork: false,
+      defaultBaseFolder: '${dir.path}/Arca',
+    );
     var s = await core.handle('state', {});
     expect((s['commons'] as Map)['name'], 'Arca Commons');
     expect(s['collections'], isEmpty);
@@ -80,7 +91,10 @@ void main() {
     s = await core.handle('createCollection', {'name': 'Manuals', 'description': 'Radio manuals'});
     final id = s['created'] as String;
     final src = File('${dir.path}/guide.pdf')..writeAsStringSync('%PDF-1.4 hello');
-    s = await core.handle('addFiles', {'collection': id, 'paths': [src.path]});
+    s = await core.handle('addFiles', {
+      'collection': id,
+      'paths': [src.path],
+    });
     final col = (s['collections'] as List).single as Map;
     expect(col['circle'], 'commons');
     final file = (col['files'] as List).single as Map;
@@ -90,7 +104,9 @@ void main() {
     // The collection head is a signed addressable event in the profile's relay.
     final profile = ((s['profiles'] as List).single as Map)['id'] as String;
     final store = await FileEventStore.open(File('${dir.path}/profiles/$profile/events.jsonl'));
-    final heads = await store.query([const NostrFilter(kinds: [Kind.arcaCollection])]);
+    final heads = await store.query([
+      const NostrFilter(kinds: [Kind.arcaCollection]),
+    ]);
     expect(heads.single.dTag, id);
     expect(heads.single.verify(), isTrue);
     await store.close();
@@ -108,8 +124,12 @@ void main() {
   });
 
   test('a failed start is reported and can be retried', () async {
-    final core = await CoreService.open(dir.path,
-        cost: VaultCost.test, backend: LoopbackBackend(LoopbackNetwork(), startOk: false), startNetwork: false);
+    final core = await CoreService.open(
+      dir.path,
+      cost: VaultCost.test,
+      backend: LoopbackBackend(LoopbackNetwork(), startOk: false),
+      startNetwork: false,
+    );
     await core.net.start();
     final s = await core.handle('state', {});
     expect((s['net'] as Map)['state'], 'failed');
@@ -127,7 +147,11 @@ void main() {
     final ready = it.current as List;
     expect(ready[0], 0);
     expect(((ready[1] as Map)['profiles'] as List).length, 1);
-    toCore.send([7, 'create', {'name': 'Second'}]);
+    toCore.send([
+      7,
+      'create',
+      {'name': 'Second'},
+    ]);
     expect(await it.moveNext(), isTrue);
     final reply = it.current as List;
     expect(reply[0], 7);

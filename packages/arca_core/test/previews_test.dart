@@ -17,7 +17,16 @@ void main() {
     }
     final video = File('${tmp.path}/clip.webm');
     final r = await Process.run('ffmpeg', [
-      '-nostdin', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=6:size=320x180:rate=10', '-c:v', 'libvpx', video.path,
+      '-nostdin',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=duration=6:size=320x180:rate=10',
+      '-c:v',
+      'libvpx',
+      video.path,
     ]);
     expect(r.exitCode, 0);
     expect(await detectMime(video), 'video/webm');

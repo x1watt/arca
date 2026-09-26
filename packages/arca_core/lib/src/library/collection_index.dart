@@ -211,10 +211,11 @@ class CollectionIndex {
   /// admin or a moderator, and are not folded in yet, oldest first.
   /// Returns the ids of the changes applied.
   List<String> fold(Iterable<NostrEvent> changes) {
-    final todo = changes
-        .where((c) => concerns(c) && !applied.contains(c.id) && c.createdAt >= foldedBefore && mayChange(c.pubkey))
-        .toList()
-      ..sort((a, b) => a.createdAt != b.createdAt ? a.createdAt.compareTo(b.createdAt) : a.id.compareTo(b.id));
+    final todo =
+        changes
+            .where((c) => concerns(c) && !applied.contains(c.id) && c.createdAt >= foldedBefore && mayChange(c.pubkey))
+            .toList()
+          ..sort((a, b) => a.createdAt != b.createdAt ? a.createdAt.compareTo(b.createdAt) : a.id.compareTo(b.id));
     final done = <String>[];
     for (final c in todo) {
       for (final op in operations(c)) {

@@ -20,5 +20,4 @@ Uint8List fromHex(String hex) {
   return out;
 }
 
-bool isHex(String s, int bytes) =>
-    s.length == bytes * 2 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(s);
+bool isHex(String s, int bytes) => s.length == bytes * 2 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(s);

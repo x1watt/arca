@@ -45,8 +45,12 @@ const _version = 1;
 
 Future<SecretKey> _deriveKey(List<int> deviceSecret, String? passphrase, List<int> salt, VaultCost cost) {
   final input = [...deviceSecret, if (passphrase != null) ...utf8.encode(passphrase)];
-  return Argon2id(memory: cost.memoryKiB, parallelism: 1, iterations: cost.iterations, hashLength: 32)
-      .deriveKey(secretKey: SecretKey(input), nonce: salt);
+  return Argon2id(
+    memory: cost.memoryKiB,
+    parallelism: 1,
+    iterations: cost.iterations,
+    hashLength: 32,
+  ).deriveKey(secretKey: SecretKey(input), nonce: salt);
 }
 
 /// Encrypts [secrets] for storage.
@@ -61,11 +65,13 @@ Future<Uint8List> sealVault(
   final key = await _deriveKey(deviceSecret, passphrase, salt, cost);
   final algo = Xchacha20.poly1305Aead();
   final nonce = algo.newNonce();
-  final plain = utf8.encode(jsonEncode({
-    'secret': toHex(secrets.secretKey),
-    'i2pEnc': toHex(secrets.i2pEncSeed),
-    'i2pSign': toHex(secrets.i2pSignSeed),
-  }));
+  final plain = utf8.encode(
+    jsonEncode({
+      'secret': toHex(secrets.secretKey),
+      'i2pEnc': toHex(secrets.i2pEncSeed),
+      'i2pSign': toHex(secrets.i2pSignSeed),
+    }),
+  );
   final box = await algo.encrypt(plain, secretKey: key, nonce: nonce);
   final header = BytesBuilder()
     ..add(_magic)
@@ -84,9 +90,7 @@ Future<Uint8List> sealVault(
 /// Decrypts a vault; throws [VaultException] for a wrong key or damaged file.
 Future<ProfileSecrets> openVault(Uint8List data, {required List<int> deviceSecret, String? passphrase}) async {
   const headerLen = 4 + 1 + 4 + 1 + 16;
-  if (data.length < headerLen + 24 + 16 ||
-      !_equal(data.sublist(0, 4), _magic) ||
-      data[4] != _version) {
+  if (data.length < headerLen + 24 + 16 || !_equal(data.sublist(0, 4), _magic) || data[4] != _version) {
     throw VaultException('not a vault file');
   }
   final cost = VaultCost(memoryKiB: _readU32(data, 5), iterations: data[9]);
@@ -97,7 +101,10 @@ Future<ProfileSecrets> openVault(Uint8List data, {required List<int> deviceSecre
   final key = await _deriveKey(deviceSecret, passphrase, salt, cost);
   final List<int> plain;
   try {
-    plain = await Xchacha20.poly1305Aead().decrypt(SecretBox(cipher, nonce: nonce, mac: mac), secretKey: key);
+    plain = await Xchacha20.poly1305Aead().decrypt(
+      SecretBox(cipher, nonce: nonce, mac: mac),
+      secretKey: key,
+    );
   } on SecretBoxAuthenticationError {
     throw VaultException('wrong key or damaged vault');
   }

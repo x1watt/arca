@@ -1,7 +1,10 @@
 // Transactions on the global chain (whitepaper, sections 6 to 9). Each is
 // signed by the account's key (BIP-340, the profile's Nostr key), numbered
 // by a per-account nonce so it cannot be replayed, and identified by the
-// SHA-256 of its canonical form.
+// SHA-256 of its canonical form. Holding proofs are the exception: they
+// carry nonce 0 and use none, since replaying one changes nothing (it
+// counts only on its own day, once), and a proof that missed its day must
+// not hold back the steward's later transactions.
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -18,6 +21,9 @@ abstract final class TxType {
   static const declare = 'declare';
   static const undeclare = 'undeclare';
   static const holdingProof = 'holdingProof';
+
+  /// Whether transactions of [type] use the account's nonce.
+  static bool numbered(String type) => type != holdingProof;
   static const claim = 'claim';
   static const buyPass = 'buyPass';
   static const settlePass = 'settlePass';

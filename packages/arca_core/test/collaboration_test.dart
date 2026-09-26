@@ -262,8 +262,13 @@ void main() {
   test('a collection too large for one message is paged, read and copied', () async {
     final net = LoopbackNetwork();
     Future<CoreService> open(String name) async {
-      final c = await CoreService.open('${tmp.path}/$name',
-          cost: VaultCost.test, backend: LoopbackBackend(net), startNetwork: false, defaultBaseFolder: '${tmp.path}/$name/Arca');
+      final c = await CoreService.open(
+        '${tmp.path}/$name',
+        cost: VaultCost.test,
+        backend: LoopbackBackend(net),
+        startNetwork: false,
+        defaultBaseFolder: '${tmp.path}/$name/Arca',
+      );
       await c.net.start();
       return c;
     }

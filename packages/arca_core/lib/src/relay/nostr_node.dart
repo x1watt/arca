@@ -142,8 +142,7 @@ class NostrNode {
       _queries.remove('$to|$id');
       await _send(to, CloseMessage(id));
       if (done || q.events.isNotEmpty || i == attempts) {
-        return q.events.values.where((e) => e.verify()).toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return q.events.values.where((e) => e.verify()).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       }
     }
     return const [];

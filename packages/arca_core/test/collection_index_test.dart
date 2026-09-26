@@ -101,15 +101,26 @@ void main() {
   test('a large list reads from the pages the head names, and only those', () {
     final files = [
       for (var i = 0; i < 400; i++)
-        {'path': 'f$i.txt', 'sha256': 'h$i', 'size': i, 'mime': 'text/plain', 'title': 'File number $i with a longer title'},
+        {
+          'path': 'f$i.txt',
+          'sha256': 'h$i',
+          'size': i,
+          'mime': 'text/plain',
+          'title': 'File number $i with a longer title',
+        },
     ];
     final contents = CollectionIndex.paginate(files);
     expect(contents.length, greaterThan(1));
     final pages = [
       for (var n = 0; n < contents.length; n++)
-        NostrEvent.sign(secretKey: admin, kind: Kind.arcaCollectionPage, content: contents[n], tags: [
-          ['d', 'c1/$n'],
-        ]),
+        NostrEvent.sign(
+          secretKey: admin,
+          kind: Kind.arcaCollectionPage,
+          content: contents[n],
+          tags: [
+            ['d', 'c1/$n'],
+          ],
+        ),
     ];
     final h = NostrEvent.sign(
       secretKey: admin,
@@ -126,9 +137,14 @@ void main() {
     final partial = CollectionIndex.fromHead(h, pages: {pages.first.id: pages.first})!;
     expect(partial.complete, isFalse);
     // A page signed by someone else under the same id is not used.
-    final fake = NostrEvent.sign(secretKey: outsider, kind: Kind.arcaCollectionPage, content: contents[0], tags: [
-      ['d', 'c1/0'],
-    ]);
+    final fake = NostrEvent.sign(
+      secretKey: outsider,
+      kind: Kind.arcaCollectionPage,
+      content: contents[0],
+      tags: [
+        ['d', 'c1/0'],
+      ],
+    );
     expect(CollectionIndex.fromHead(h, pages: {pages[0].id: fake})!.files, isEmpty);
   });
 

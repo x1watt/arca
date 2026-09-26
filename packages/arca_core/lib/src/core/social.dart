@@ -64,18 +64,15 @@ class Follow {
     'fetchedAt': fetchedAt,
   };
 
-  factory Follow.fromJson(Map<String, dynamic> m) => Follow(
-    pubkey: m['pubkey'] as String,
-    address: m['address'] as String,
-    name: m['name'] as String? ?? '',
-  )
-    ..collections = {
-      for (final e in (m['collections'] as Map? ?? {}).entries)
-        e.key as String: (e.value as Map).cast<String, Object?>(),
-    }
-    ..decisions = (m['decisions'] as Map? ?? {}).cast<String, String>()
-    ..outbox = [for (final o in m['outbox'] as List? ?? const []) (o as Map).cast<String, Object?>()]
-    ..fetchedAt = m['fetchedAt'] as int?;
+  factory Follow.fromJson(Map<String, dynamic> m) =>
+      Follow(pubkey: m['pubkey'] as String, address: m['address'] as String, name: m['name'] as String? ?? '')
+        ..collections = {
+          for (final e in (m['collections'] as Map? ?? {}).entries)
+            e.key as String: (e.value as Map).cast<String, Object?>(),
+        }
+        ..decisions = (m['decisions'] as Map? ?? {}).cast<String, String>()
+        ..outbox = [for (final o in m['outbox'] as List? ?? const []) (o as Map).cast<String, Object?>()]
+        ..fetchedAt = m['fetchedAt'] as int?;
 }
 
 class FollowStore {

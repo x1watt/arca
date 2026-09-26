@@ -89,8 +89,7 @@ extension _Collaboration on CoreService {
           final todo =
               changes
                   .where(
-                    (c) =>
-                        c.tagValues('a').contains(address) && !col.hasApplied(c.id) && col.isModerator(c.pubkey),
+                    (c) => c.tagValues('a').contains(address) && !col.hasApplied(c.id) && col.isModerator(c.pubkey),
                   )
                   .toList()
                 ..sort(

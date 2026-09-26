@@ -27,7 +27,10 @@ void main() {
       expect(back.secretKey, secrets.secretKey);
       expect(back.i2pSignSeed, secrets.i2pSignSeed);
       expect(() => openVault(sealed, deviceSecret: device, passphrase: 'nope'), throwsA(isA<VaultException>()));
-      expect(() => openVault(sealed, deviceSecret: List.filled(32, 8), passphrase: 'pw'), throwsA(isA<VaultException>()));
+      expect(
+        () => openVault(sealed, deviceSecret: List.filled(32, 8), passphrase: 'pw'),
+        throwsA(isA<VaultException>()),
+      );
     });
 
     test('detects a damaged file', () async {

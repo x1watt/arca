@@ -209,11 +209,13 @@ class ProfileStore {
 
   Future<void> _save() => _writeAtomic(
     File('${dir.path}/device.json'),
-    utf8.encode(const JsonEncoder.withIndent('  ').convert({
-      'deviceId': deviceId,
-      'active': _active,
-      'profiles': [for (final p in _profiles) p.toJson()],
-    })),
+    utf8.encode(
+      const JsonEncoder.withIndent('  ').convert({
+        'deviceId': deviceId,
+        'active': _active,
+        'profiles': [for (final p in _profiles) p.toJson()],
+      }),
+    ),
   );
 
   /// The device secret that, with Argon2id, protects every vault. It lives in

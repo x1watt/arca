@@ -29,10 +29,14 @@ abstract class MessageLink {
 /// An in-process network for tests: each [link] answers for its addresses,
 /// and messages are delivered asynchronously, optionally dropping some.
 class LoopbackNetwork {
-  LoopbackNetwork({this.dropRate = 0, int seed = 1}) : _rng = Random(seed);
+  LoopbackNetwork({this.dropRate = 0, this.latency = Duration.zero, int seed = 1}) : _rng = Random(seed);
 
   /// Share of messages silently lost, like best-effort I2P delivery.
   double dropRate;
+
+  /// Delay before a message arrives: up to this, at random, so messages
+  /// can overtake each other as they do over I2P tunnels.
+  Duration latency;
   final Random _rng;
   final _owners = <String, _LoopbackLink>{};
   final _offline = <String>{};
@@ -46,14 +50,18 @@ class LoopbackNetwork {
   }
 
   /// Takes an address off the network (a device switched off) or back on.
-  void setOnline(String address, bool online) =>
-      online ? _offline.remove(address) : _offline.add(address);
+  void setOnline(String address, bool online) => online ? _offline.remove(address) : _offline.add(address);
 
   Future<bool> _deliver(String from, String to, Uint8List bytes) async {
     final target = _owners[to];
     if (target == null || _offline.contains(to) || _offline.contains(from)) return false;
     if (dropRate > 0 && _rng.nextDouble() < dropRate) return true;
-    scheduleMicrotask(() => target._controller.add(Inbound(from, to, bytes)));
+    void arrive() => target._controller.add(Inbound(from, to, bytes));
+    if (latency == Duration.zero) {
+      scheduleMicrotask(arrive);
+    } else {
+      Timer(latency * _rng.nextDouble(), arrive);
+    }
     return true;
   }
 }

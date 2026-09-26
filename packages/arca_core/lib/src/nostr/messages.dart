@@ -33,10 +33,9 @@ sealed class NostrMessage {
       return switch (type) {
         'EVENT' when json.length == 2 => EventMessage(NostrEvent.fromJson(json[1])),
         'EVENT' when json.length == 3 => SubscriptionEvent(json[1] as String, NostrEvent.fromJson(json[2])),
-        'REQ' when json.length >= 3 => ReqMessage(
-          json[1] as String,
-          [for (final f in json.sublist(2)) NostrFilter.fromJson(f)],
-        ),
+        'REQ' when json.length >= 3 => ReqMessage(json[1] as String, [
+          for (final f in json.sublist(2)) NostrFilter.fromJson(f),
+        ]),
         'CLOSE' when json.length == 2 => CloseMessage(json[1] as String),
         'EOSE' when json.length == 2 => EoseMessage(json[1] as String),
         'OK' when json.length == 4 => OkMessage(json[1] as String, json[2] as bool, json[3] as String),

@@ -389,7 +389,7 @@ The model download is the one connection that does not go over I2P: a plain HTTP
 
 The chain and marcas follow the whitepaper (sections 6 to 9) and are built in milestones on a testnet first: the same rules with smaller numbers (a "day" of 10 minutes, partitions of 64 MB). Constants are in `packages/arca_core/lib/src/chain/params.dart`, one set per network; nothing else sets them.
 
-Built so far (milestones 1 and 2):
+Built so far (milestones 1 to 3):
 
 - **Corpus** (`chain/corpus.dart`).
   - Files are cut into 256 KB chunks; each chunk is a Merkle tree of 1 KB slices.
@@ -414,7 +414,27 @@ Built so far (milestones 1 and 2):
   - The header commits to the previous block, the clock tick, the transactions root, the resulting state root, the corpus root and the producer's proof, and is signed by the producer.
   - A node applies a block to a copy of its state and accepts it only if every transaction is valid and the root it computes is the one signed. A wrong state is a rejected block.
 
-Next: the clock and mining with holding proofs (milestone 3), issuance with the two budgets and the replication curve (4), circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
+- **Clock and mining** (`chain/mining.dart`, milestone 3).
+  - Time is cut into ticks of wall time (1 s on the testnet). A tick's challenge is SHA-256 of the previous block and the tick, so a producer cannot grind it by changing its own block.
+  - Each tick, a steward reads one slice per declared partition from its packed copy, at the chunk and slice the challenge names. The proof quality is a hash of the challenge and the packed slice; a block is valid only with a quality below the target, and the lowest quality wins. A faster disk gains nothing: there is one read per partition per tick.
+  - Checking a proof recomputes the steward's keystream for that chunk (one Argon2id), unpacks the slice and climbs from it to the corpus root.
+  - The target is retargeted after every block, by 9/10 or 11/10, towards one block per `blockTicks`. Forks are settled by cumulative work: each block counts for the tries its target asked for on average (`2^256 / (target + 1)`), not for the quality its proof happened to reach, so one lucky block cannot outweigh a longer chain. Between forks of equal work the better proof at the tip wins, which every node judges alike and nobody can grind.
+  - While no steward has declared a partition, blocks need no proof, so a new chain can start.
+  - Known weakness: the clock is the producers' wall time, checked only loosely (a block from the future is refused). A verifiable delay function takes its place before mainnet; until then a producer with a wrong clock can only mine ticks others refuse.
+- **Holding proofs** (`chain/state.dart`).
+  - A day's beacon is the last block of the day before. From the beacon, the day and the steward's key, each declared partition gets a slice to prove; the proof is the packed slice plus its Merkle paths, about 2 KB.
+  - A steward that has not proven every partition it declared before the day began, when the next day starts, loses all its declarations.
+  - Holding proofs carry no nonce: replaying one changes nothing (it counts only on its own day), and a proof that missed its day, or was made on a fork that lost, must not hold back the steward's later transactions. A steward whose head moves to another fork makes the day's proof again against that fork's beacon.
+- **Rewards so far.** Each block pays `issuance of the day / blocks per day` into the pool of the circle the winning proof names. The two budgets, the replication curve and standing come in milestone 4.
+- **Nodes** (`chain/node.dart`).
+  - Blocks, transactions and chain requests travel as messages starting with 0xC1 on the same link as the Nostr and file messages.
+  - A node keeps every block it checked, follows the chain with the most work, and keeps a mempool it puts in its own blocks.
+  - A block whose parent is missing waits as an orphan while the node asks the sender for its chain with a locator (its head, then the blocks 1, 2, 4, 8... below), so the answer starts at the newest block both share, however deep the fork.
+  - I2P loses messages, most of all on new tunnels. Once per block interval a node asks one peer in turn for anything after its head and sends its waiting transactions again. When the head moves to another fork, the transactions of the abandoned blocks go back to the mempool.
+  - As a steward, it mines each tick and posts its holding proof early each day by itself.
+  - Tested in process (three stewards and one that declares a partition it does not keep: it is dropped on the next day, the others agree on one head and state root) on a loopback network that loses 30% of messages and delays them up to three ticks, and over live I2P (`tool/live_chain_check.dart`): three nodes on this desktop with 1 s ticks, 5-tick blocks and 60-tick days ran 64 blocks over five days, with the same head at every sample, all three stewards proving every day, and seven fork switches, all healed within a block or two. The first run, before the resync and the locator, failed: the stewards whose `declare` was lost never got in, and a node stayed on its own fork.
+
+Next: issuance with the two budgets and the replication curve (4), circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
 
 ## 11. Open questions
 

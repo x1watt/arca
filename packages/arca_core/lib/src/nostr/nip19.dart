@@ -18,11 +18,7 @@ int _polymod(List<int> values) {
   return chk;
 }
 
-List<int> _hrpExpand(String hrp) => [
-  for (final c in hrp.codeUnits) c >> 5,
-  0,
-  for (final c in hrp.codeUnits) c & 31,
-];
+List<int> _hrpExpand(String hrp) => [for (final c in hrp.codeUnits) c >> 5, 0, for (final c in hrp.codeUnits) c & 31];
 
 List<int> _convertBits(List<int> data, int from, int to, {required bool pad}) {
   var acc = 0, bits = 0;

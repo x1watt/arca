@@ -18,5 +18,7 @@ export 'src/relay/relay.dart' show NostrRelay, AcceptPolicy;
 export 'src/transport/i2p_link.dart' show I2pLink, nostrPort;
 export 'src/transport/link.dart' show MessageLink, Inbound, LoopbackNetwork;
 export 'src/core/core_service.dart' show CoreService, coreIsolateMain;
-export 'src/core/network.dart' show NetworkManager, NetworkBackend, I2pBackend, LoopbackBackend, OnlineProfile, NetState;
-export 'src/library/library.dart' show Commons, Library, Collection, LibraryFile, LibraryException, hashFile, detectMime;
+export 'src/core/network.dart'
+    show NetworkManager, NetworkBackend, I2pBackend, LoopbackBackend, OnlineProfile, NetState;
+export 'src/library/library.dart'
+    show Commons, Library, Collection, LibraryFile, LibraryException, hashFile, detectMime;

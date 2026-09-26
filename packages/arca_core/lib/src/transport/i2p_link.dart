@@ -26,6 +26,5 @@ class I2pLink implements MessageLink {
 
   /// Sends as [from], a destination added with `addSharedDestination`.
   @override
-  Future<bool> send(String to, Uint8List bytes, {required String from}) =>
-      service.send(to, port, bytes, fromB32: from);
+  Future<bool> send(String to, Uint8List bytes, {required String from}) => service.send(to, port, bytes, fromB32: from);
 }
