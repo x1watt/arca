@@ -17,10 +17,10 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _askEachTime = false;
-  bool _wifiOnly = true;
-  bool _charging = true;
-  double _upload = 2;
-  double _freeShare = 20;
+  // Sharing limits are the core's (setSharing); a slider shows the value
+  // being dragged until it is let go.
+  double? _upload;
+  double? _freeShare;
   double _noteCache = 2;
   double _mediaCache = 5;
   bool _circleRelay = false;
@@ -317,35 +317,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: muted,
                 ),
               ),
+              if (!state.sharing.allowed)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    'Paused now: this device is not on Wi-Fi or a cable, or not charging.',
+                    style: muted,
+                  ),
+                ),
               SwitchListTile(
                 secondary: const Icon(Icons.wifi),
-                title: const Text('Only on WiFi or Ethernet'),
-                value: _wifiOnly,
-                onChanged: (v) => setState(() => _wifiOnly = v),
+                title: const Text('Only on Wi-Fi or a cable'),
+                subtitle: const Text(
+                  'Serving others and the test network\'s heavy work wait for it',
+                ),
+                value: state.sharing.onlyUnmetered,
+                onChanged: (v) => _run(_core.setSharing(onlyUnmetered: v)),
               ),
               SwitchListTile(
                 secondary: const Icon(Icons.battery_charging_full),
                 title: const Text('Only while charging'),
-                value: _charging,
-                onChanged: (v) => setState(() => _charging = v),
+                subtitle: const Text(
+                  'A computer without a battery always counts as charging',
+                ),
+                value: state.sharing.onlyCharging,
+                onChanged: (v) => _run(_core.setSharing(onlyCharging: v)),
               ),
-              _slider(
+              _liveSlider(
                 Icons.upload,
                 'Upload speed limit',
-                '${_upload.toStringAsFixed(1)} MB/s',
-                _upload,
+                (v) => '${v.toStringAsFixed(1)} MB/s',
+                _upload ?? state.sharing.uploadLimit / (1024 * 1024),
                 0.5,
                 20,
-                (v) => _upload = v,
+                (v) => setState(() => _upload = v),
+                (v) async {
+                  await _run(
+                    _core.setSharing(uploadLimit: (v * 1024 * 1024).round()),
+                  );
+                  if (mounted) setState(() => _upload = null);
+                },
               ),
-              _slider(
+              _liveSlider(
                 Icons.volunteer_activism_outlined,
                 'Share for free readers',
-                '${_freeShare.round()}%',
-                _freeShare,
+                (v) => '${v.round()}% of a day\'s upload',
+                _freeShare ?? state.sharing.freeShare.toDouble(),
                 0,
                 100,
-                (v) => _freeShare = v,
+                (v) => setState(() => _freeShare = v),
+                (v) async {
+                  await _run(_core.setSharing(freeShare: v.round()));
+                  if (mounted) setState(() => _freeShare = null);
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.schedule),
@@ -374,7 +398,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   child: Row(
                     children: [
                       Icon(
-                        _wifiOnly || _charging
+                        state.sharing.onlyUnmetered ||
+                                state.sharing.onlyCharging
                             ? Icons.warning_amber_rounded
                             : Icons.check_circle_outline,
                         size: 16,
@@ -383,7 +408,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          _wifiOnly || _charging
+                          state.sharing.onlyUnmetered ||
+                                  state.sharing.onlyCharging
                               ? 'Declared as intermittent because sharing is limited to WiFi or '
                                     'charging. Circles rarely pick intermittent machines; turn '
                                     'those limits off on a computer that is always on.'
@@ -521,6 +547,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  /// A slider for a setting the core keeps: [drag] while moving, [save]
+  /// once let go.
+  Widget _liveSlider(
+    IconData icon,
+    String label,
+    String Function(double) value,
+    double current,
+    double min,
+    double max,
+    void Function(double) drag,
+    Future<void> Function(double) save,
+  ) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(label),
+      trailing: Text(value(current)),
+      subtitle: Slider(
+        value: current.clamp(min, max),
+        min: min,
+        max: max,
+        onChanged: drag,
+        onChangeEnd: save,
       ),
     );
   }

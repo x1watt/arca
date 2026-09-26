@@ -45,7 +45,7 @@ Future<void> main(List<String> args) async {
     await out.close();
     final packMs = sw.elapsedMilliseconds;
     // Reading a slice from the packed copy (page cache warm: the best case
-    // for the honest steward, so the ratio is conservative).
+    // for the honest keeper, so the ratio is conservative).
     const reads = 2000;
     sw
       ..reset()

@@ -42,7 +42,12 @@ class Block {
     required this.target,
     required this.traceRoot,
     required this.trace,
+    this.headerTxCount,
   });
+
+  /// For a block known only by its header (a checkpoint): how many
+  /// transactions the header names, so its hash stays the same.
+  final int? headerTxCount;
 
   final int height;
   final String prev;
@@ -79,7 +84,7 @@ class Block {
     'producer': producer,
     'target': target.toRadixString(16),
     'txRoot': txRoot,
-    'txCount': txs.length,
+    'txCount': headerTxCount ?? txs.length,
     'stateRoot': stateRoot,
     'traceRoot': traceRoot,
     'corpusRoot': corpusRoot,
@@ -117,7 +122,7 @@ class Block {
   BigInt get quality {
     if (proof.isEmpty) return maxTarget;
     final p = SliceProof.fromJson(proof);
-    return proofQuality(mineChallenge(prev, tick), p.steward, p.packed);
+    return proofQuality(mineChallenge(prev, tick), p.keeper, p.packed);
   }
 
   /// The block's first step on top of [state]: closes a day when one
@@ -128,14 +133,14 @@ class Block {
     if (tick <= state.tick && state.height > 0) throw const ChainError('the clock went backwards');
     final next = state.copy();
     next.startDay(state.dayOf(tick));
-    if (state.corpusRoot.isNotEmpty && next.stewards > 0) {
+    if (state.corpusRoot.isNotEmpty && next.keepers > 0) {
       // Mining proof: a slice of a partition this producer declared, for
       // the circle it names, below the target. (Before anyone declares, at
       // the very start, blocks carry no proof and add almost no work, so
       // any mined chain outweighs them.)
       if (proof.isEmpty) throw const ChainError('a block needs a mining proof');
       final p = SliceProof.fromJson(proof);
-      if (p.steward != producer) throw const ChainError('the proof is not the producer\'s');
+      if (p.keeper != producer) throw const ChainError('the proof is not the producer\'s');
       if (next.declarations[producer]?[p.partition] != p.circle) {
         throw const ChainError('the producer did not declare that partition');
       }
@@ -287,6 +292,7 @@ class Block {
     'target': target.toRadixString(16),
     'traceRoot': traceRoot,
     'trace': trace,
+    'headerTxCount': ?headerTxCount,
   };
 
   factory Block.fromJson(Map m) => Block(
@@ -303,5 +309,6 @@ class Block {
     target: BigInt.parse(m['target'] as String, radix: 16),
     traceRoot: m['traceRoot'] as String,
     trace: (m['trace'] as List).cast<String>(),
+    headerTxCount: m['headerTxCount'] as int?,
   );
 }

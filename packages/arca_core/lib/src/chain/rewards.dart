@@ -1,18 +1,18 @@
 // A day's new marcas (whitepaper, section 8), paid when the day closes to
-// the circles whose stewards proved their keeping that day.
+// the circles whose keepers proved their keeping that day.
 //
 // Storage budget (30%): per partition, deduplicated by construction, split
 // by size and by the replication curve among the partition's provers.
 //
 // Interest budget (70%): per collection. A collection's interest is its
 // genesis seed, plus what non-members burned for it over the last 30 days,
-// plus a third of the standing of the stewards from other circles who keep
-// it, each divided by the number of collections they keep. A steward's
+// plus a third of the standing of the keepers from other circles who keep
+// it, each divided by the number of collections they keep. A keeper's
 // standing is its share, on the curve, of the interest of what it keeps;
 // the budget is paid in proportion to it. Standing is recomputed daily
 // from the day before, so it flows outward one hop per day.
 //
-// Every payment goes to the pool of the circle the steward's declaration
+// Every payment goes to the pool of the circle the keeper's declaration
 // names. A circle whose last anchor is more than a day old at the end of
 // the day is cut off: its pool earns nothing and its collections earn no
 // interest. What nobody earned is never created.
@@ -32,8 +32,8 @@ int curveTotal(int keepers) {
 BigInt curveShare(BigInt amount, int keepers) =>
     keepers == 0 ? BigInt.zero : amount * BigInt.from(curveTotal(keepers)) ~/ BigInt.from(100 * keepers);
 
-/// Pays [day]'s issuance to the stewards who proved all of it, and
-/// recomputes standing. Called as the day closes, after stewards who
+/// Pays [day]'s issuance to the keepers who proved all of it, and
+/// recomputes standing. Called as the day closes, after keepers who
 /// missed a proof were dropped.
 void settleDay(ChainState s, int day) {
   final issuance = s.params.issuanceOn(day);
@@ -44,10 +44,10 @@ void settleDay(ChainState s, int day) {
 
   // Who proved which partition today, in key order so every node sums alike.
   final provers = <int, List<String>>{};
-  for (final steward in (s.declarations.keys.toList()..sort())) {
-    final proven = s.provenOn[steward] ?? const {};
-    for (final p in s.declarations[steward]!.keys) {
-      if (proven[p] == day) (provers[p] ??= []).add(steward);
+  for (final keeper in (s.declarations.keys.toList()..sort())) {
+    final proven = s.provenOn[keeper] ?? const {};
+    for (final p in s.declarations[keeper]!.keys) {
+      if (proven[p] == day) (provers[p] ??= []).add(keeper);
     }
   }
 
@@ -64,21 +64,21 @@ void settleDay(ChainState s, int day) {
     for (final p in (provers.keys.toList()..sort())) {
       final keepers = provers[p]!;
       final each = storageBudget * weights[p]! ~/ total ~/ BigInt.from(keepers.length);
-      for (final steward in keepers) {
-        _pay(s, live, s.declarations[steward]![p]!, each.toInt());
+      for (final keeper in keepers) {
+        _pay(s, live, s.declarations[keeper]![p]!, each.toInt());
       }
     }
   }
 
-  // Interest: which collections each steward kept whole today.
+  // Interest: which collections each keeper kept whole today.
   final keptBy = <String, List<String>>{};
   final keptCount = <String, int>{};
   for (final id in (s.collections.keys.toList()..sort())) {
     final parts = s.collections[id]!.partitions;
     if (parts.isEmpty || live[s.collections[id]!.circle] != true) continue;
     final keepers = [
-      for (final steward in provers[parts.first] ?? const <String>[])
-        if (parts.every((p) => provers[p]?.contains(steward) ?? false)) steward,
+      for (final keeper in provers[parts.first] ?? const <String>[])
+        if (parts.every((p) => provers[p]?.contains(keeper) ?? false)) keeper,
     ];
     if (keepers.isEmpty) continue;
     keptBy[id] = keepers;
@@ -87,7 +87,7 @@ void settleDay(ChainState s, int day) {
     }
   }
   final from = day - ChainParams.interestWindowDays + 1;
-  final shares = <(String, String), BigInt>{}; // (steward, collection)
+  final shares = <(String, String), BigInt>{}; // (keeper, collection)
   final standing = <String, BigInt>{};
   var sum = BigInt.zero;
   for (final e in keptBy.entries) {
@@ -112,8 +112,8 @@ void settleDay(ChainState s, int day) {
   if (sum > BigInt.zero) {
     final keys = shares.keys.toList()..sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
     for (final key in keys) {
-      final (steward, id) = key;
-      final circle = s.declarations[steward]![s.collections[id]!.partitions.first]!;
+      final (keeper, id) = key;
+      final circle = s.declarations[keeper]![s.collections[id]!.partitions.first]!;
       _pay(s, live, circle, (interestBudget * shares[key]! ~/ sum).toInt());
     }
   }
@@ -148,19 +148,19 @@ void _syncScores(ChainState s, Map<int, List<String>> provers, Map<String, List<
   for (final e in provers.entries) {
     final size = e.key < s.partitionSizes.length ? s.partitionSizes[e.key] : 0;
     final weight = size * ChainParams.targetCopies ~/ e.value.length;
-    for (final steward in e.value) {
-      final circle = s.declarations[steward]![e.key]!;
+    for (final keeper in e.value) {
+      final circle = s.declarations[keeper]![e.key]!;
       final m = today.putIfAbsent(circle, () => {});
-      m[steward] = (m[steward] ?? 0) + weight;
+      m[keeper] = (m[keeper] ?? 0) + weight;
     }
   }
   for (final e in keptBy.entries) {
     final c = s.collections[e.key]!;
     final size = c.partitions.fold(0, (a, p) => a + (p < s.partitionSizes.length ? s.partitionSizes[p] : 0));
-    for (final steward in e.value) {
-      if (s.declarations[steward]![c.partitions.first] != c.circle) continue;
+    for (final keeper in e.value) {
+      if (s.declarations[keeper]![c.partitions.first] != c.circle) continue;
       final m = today.putIfAbsent(c.circle, () => {});
-      m[steward] = (m[steward] ?? 0) + size * ChainParams.targetCopies ~/ 2;
+      m[keeper] = (m[keeper] ?? 0) + size * ChainParams.targetCopies ~/ 2;
     }
   }
   for (final circle in {...s.syncScores.keys, ...today.keys}) {

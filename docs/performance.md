@@ -147,7 +147,7 @@ Alice's app died without a word during a two-instance test; the kernel log had i
 
 ### 3.14 Packing: the price of a copy that is really yours
 
-The whitepaper wants making a packed slice on demand to cost 1,000 to 10,000 times more than reading it from the packed copy, so a steward cannot claim a copy they do not keep. `tool/packing_bench.dart` on this desktop (16 threads, one chunk per thread, Argon2id from the `cryptography` package in plain Dart), with page-cache reads, the honest steward's best case:
+The whitepaper wants making a packed slice on demand to cost 1,000 to 10,000 times more than reading it from the packed copy, so a keeper cannot claim a copy they do not keep. `tool/packing_bench.dart` on this desktop (16 threads, one chunk per thread, Argon2id from the `cryptography` package in plain Dart), with page-cache reads, the honest keeper's best case:
 
 - Argon2id 8 MB: 34 ms per chunk, 4.05 MB/s, 408x. Too cheap.
 - Argon2id 32 MB: 146 ms per chunk, 1.40 MB/s, 1,355x. The testnet setting.
@@ -157,18 +157,19 @@ Not measured yet: the same on the C61 phone, and a native RandomX for comparison
 
 ### 3.15 Checking a proof costs one Argon2id
 
-A steward's mining read is cheap (one 1 KB read per declared partition per tick), but every node that checks a block or a holding proof recomputes the steward's keystream for that chunk: one Argon2id, 146 ms with the testnet's 32 MB and 264 ms with mainnet's 64 MB on this desktop, and more on a phone. Rules that follow:
+A keeper's mining read is cheap (one 1 KB read per declared partition per tick), but every node that checks a block or a holding proof recomputes the keeper's keystream for that chunk: one Argon2id, 146 ms with the testnet's 32 MB and 264 ms with mainnet's 64 MB on this desktop, and more on a phone. Rules that follow:
 
 - A node checks each block once: the resulting state is kept with the block, and a block seen again is dropped by its hash before any work.
-- Holding proofs arrive as a burst early each day (one per declared partition per steward). Checking them must never run on the UI isolate, and when the chain node moves into the core it must not block the core isolate either: proof checks go to a worker, like transcription (4.1), with the core only handing over the proof and taking back the verdict.
+- Holding proofs arrive as a burst early each day (one per declared partition per keeper). Checking them must never run on the UI isolate, and when the chain node moves into the core it must not block the core isolate either: proof checks go to a worker, like transcription (4.1), with the core only handing over the proof and taking back the verdict.
 - Phones will not check every proof; they follow headers and fraud proofs (milestone 6).
 - Chain traffic is bounded: a node asks one peer per block interval for news, a `get` is answered with at most 64 blocks, and a burst of orphans from one peer asks once per tick. Catching up after a long absence takes several rounds by design, not one flood.
 - A producer checks each transaction once: it applies it to a copy of the state and keeps that copy, instead of trying it on a copy and then applying it again, which cost every holding proof two Argon2id.
-- The first block of each day settles the day before: one pass over every steward's declarations and every collection's keepers, in integer arithmetic. Cheap on the testnet; at mainnet size (millions of declarations) it must be measured before launch, and may need to be spread over the day's first blocks.
+- The first block of each day settles the day before: one pass over every keeper's declarations and every collection's keepers, in integer arithmetic. Cheap on the testnet; at mainnet size (millions of declarations) it must be measured before launch, and may need to be spread over the day's first blocks.
 - A circle log is checked entry by entry, each with one or more Schnorr signatures in plain Dart. A device keeps the folded log and checks only new entries; replaying a long log from the start is for a new device, off the UI isolate.
 - A block computes a state root after every step (its trace). Each namespace keeps its root until touched, but a touched namespace is rebuilt whole (n log n hashes), and balances are touched by nearly every transaction. Fine at testnet size; mainnet needs an incremental tree that rehashes only the changed paths.
 - A light client never runs Argon2id: it checks a header's proof quality with one hash and leaves the memory-hard check to fraud proofs. Choosing its head goes through every header it holds; to be bounded to recent headers before phones hold months of them.
 - Reading receipts cost the reader one Schnorr signature and the server one check per 256 KB delivered, not per chunk; a `HELLO` costs one of each per server per download at most.
+- A phone in light mode checks no proof of storage at all: after each new head it asks a full node for five proven entries (balance, nonce, circle, standing, sync score), a few KB and five signature-free hash checks.
 
 ---
 

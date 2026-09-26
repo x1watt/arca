@@ -186,4 +186,21 @@ void main() {
       expect(r.error, contains('receipts'));
     });
   });
+
+  test('a paused device sends readers elsewhere; the upload limit paces what it sends', () async {
+    final net = LoopbackNetwork();
+    final (src, sha) = await randomFile('paced.bin', 200 * 1024);
+    final a = serve(net, 'a', {sha: src.path}), b = serve(net, 'b', {sha: src.path});
+    final reader = serve(net, 'r', {});
+    a.paused = true;
+    b.paused = true;
+    final none = await reader.fetch(sha, 200 * 1024, ['a', 'b'], '${tmp.path}/none.bin');
+    expect(none.error, contains('Nobody'));
+    b.paused = false;
+    b.uploadLimit = 400 * 1024; // 200 KB takes half a second
+    final sw = Stopwatch()..start();
+    final got = await reader.fetch(sha, 200 * 1024, ['a', 'b'], '${tmp.path}/got.bin');
+    expect(got.ok, isTrue, reason: got.error);
+    expect(sw.elapsedMilliseconds, greaterThanOrEqualTo(400), reason: 'paced by the limit');
+  });
 }

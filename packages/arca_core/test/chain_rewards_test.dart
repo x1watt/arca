@@ -12,7 +12,7 @@ import 'package:test/test.dart';
 const p = ChainParams.testnet;
 const m = ChainParams.grainsPerMarca;
 
-/// Steward names stand in for keys: settlement never checks signatures.
+/// Keeper names stand in for keys: settlement never checks signatures.
 ChainState library({
   required List<String> circles,
   required List<int> partitionSizes,
@@ -25,12 +25,12 @@ ChainState library({
   corpusRoot: 'x',
 );
 
-/// [steward] keeps [partitions] for [circle] from day 0 on.
-void keep(ChainState s, String steward, String circle, List<int> partitions) {
-  if (!s.declarations.containsKey(steward)) s.stewards++;
+/// [keeper] keeps [partitions] for [circle] from day 0 on.
+void keep(ChainState s, String keeper, String circle, List<int> partitions) {
+  if (!s.declarations.containsKey(keeper)) s.keepers++;
   for (final q in partitions) {
-    (s.declarations[steward] ??= {})[q] = circle;
-    (s.declaredOn[steward] ??= {})[q] = 0;
+    (s.declarations[keeper] ??= {})[q] = circle;
+    (s.declaredOn[keeper] ??= {})[q] = 0;
   }
 }
 
@@ -149,7 +149,7 @@ void main() {
     expect(pool(s, 'x'), x0 + p.issuanceOn(2) * ChainParams.storageShare ~/ 100 ~/ 2, reason: 'x earns storage again');
   });
 
-  test('a steward that misses a proof loses its standing', () {
+  test('a keeper that misses a proof loses its standing', () {
     final s = library(
       circles: ['wiki', 'x'],
       partitionSizes: [256],
@@ -167,9 +167,9 @@ void main() {
   });
 
   for (final ringSize in [2, 5]) {
-    test('$ringSize circles keeping each other\'s junk earn under 1.5 times what honest stewards earn', () {
-      // Ten honest stewards keep Wikipedia only. In each ring circle, ten
-      // stewards keep Wikipedia, their own junk and every other ring
+    test('$ringSize circles keeping each other\'s junk earn under 1.5 times what honest keepers earn', () {
+      // Ten honest keepers keep Wikipedia only. In each ring circle, ten
+      // keepers keep Wikipedia, their own junk and every other ring
       // circle's junk, to pass standing around.
       final ring = [for (var i = 0; i < ringSize; i++) 'r$i'];
       final s = library(
@@ -190,7 +190,7 @@ void main() {
         proveAndClose(s);
       }
       final honest = s.standing['honest0']!, colluder = s.standing['r0-0']!;
-      print('ring of $ringSize: ${(colluder / honest).toStringAsFixed(3)}x an honest steward\'s standing');
+      print('ring of $ringSize: ${(colluder / honest).toStringAsFixed(3)}x an honest keeper\'s standing');
       expect(colluder, greaterThan(honest), reason: 'keeping others\' data does pass standing on');
       expect(colluder / honest, lessThanOrEqualTo(1.5));
     });

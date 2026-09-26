@@ -1,6 +1,6 @@
 // A chain node (whitepaper, section 6): keeps every block it has checked,
 // follows the chain with the most work, gossips blocks and transactions to
-// its peers over the same link as everything else, and, as a steward,
+// its peers over the same link as everything else, and, as a keeper,
 // mines each tick and posts its daily holding proofs by itself.
 //
 // Messages start with 0xC1 (never '[', so the Nostr side ignores them):
@@ -51,7 +51,7 @@ class ChainNode {
     required this.link,
     List<int>? secretKey,
     Signer? signer,
-    this.steward,
+    this.keeper,
     List<String> peers = const [],
     DateTime Function()? now,
     Block? base,
@@ -88,7 +88,7 @@ class ChainNode {
     required MessageLink link,
     List<int>? secretKey,
     Signer? signer,
-    Steward? steward,
+    Keeper? keeper,
     List<String> peers = const [],
   }) {
     final entries = {
@@ -97,12 +97,12 @@ class ChainNode {
     final block = snap['block'] == null ? null : Block.fromJson(snap['block'] as Map);
     return ChainNode(
       params: params,
-      genesis: ChainState.fromEntries(params, entries),
+      genesis: ChainState.fromEntries(params, entries)..head = block?.hash ?? '',
       address: address,
       link: link,
       secretKey: secretKey,
       signer: signer,
-      steward: steward,
+      keeper: keeper,
       peers: peers,
       base: block,
       baseWork: BigInt.parse(snap['work'] as String),
@@ -119,7 +119,7 @@ class ChainNode {
   late final String key = signer.publicKey;
 
   /// This node's packed partitions, when it keeps any.
-  Steward? steward;
+  Keeper? keeper;
   final Set<String> peers;
   final DateTime Function() _now;
 
@@ -204,7 +204,7 @@ class ChainNode {
   /// Once per block interval, asks a peer for news and sends the waiting
   /// transactions again: a message can be lost (a new I2P tunnel drops the
   /// first ones), and a transaction in a block that lost a fork is known
-  /// only to its sender. Without this, a steward whose `declare` never
+  /// only to its sender. Without this, a keeper whose `declare` never
   /// reached a miner can never mine its way in.
   void _resync(int tick) {
     if (tick - _relayedAt < params.blockTicks) return;
@@ -350,10 +350,10 @@ class ChainNode {
       _resync(tick);
       if (!mining || tick <= state.tick) return;
       final head = state;
-      final mine = steward == null ? const <int, String>{} : (head.declarations[key] ?? const <int, String>{});
+      final mine = keeper == null ? const <int, String>{} : (head.declarations[key] ?? const <int, String>{});
       _holdingProofs(head, mine, tick);
       _anchor(head, tick);
-      final needsProof = head.corpusRoot.isNotEmpty && head.stewards > 0;
+      final needsProof = head.corpusRoot.isNotEmpty && head.keepers > 0;
       Map<String, Object?> proof = const {};
       if (needsProof) {
         if (mine.isEmpty) return;
@@ -362,7 +362,7 @@ class ChainNode {
         int? best;
         BigInt? bestQuality;
         for (final p in mine.keys) {
-          final (_, _, packed) = await steward!.read(challenge, p);
+          final (_, _, packed) = await keeper!.read(challenge, p);
           final q = proofQuality(challenge, key, packed);
           if (bestQuality == null || q < bestQuality) {
             best = p;
@@ -370,7 +370,7 @@ class ChainNode {
           }
         }
         if (bestQuality == null || bestQuality >= head.target) return;
-        proof = (await steward!.prove(challenge, best!, mine[best]!)).toJson();
+        proof = (await keeper!.prove(challenge, best!, mine[best]!)).toJson();
       } else if (_mempool.isEmpty) {
         return; // before anyone mines, blocks only carry transactions
       }
@@ -378,7 +378,7 @@ class ChainNode {
       final block = await Block.produceWith(head, signer, txs, tick: tick, proof: proof);
       if (headHash == block.prev) await _accept(block, null);
     } catch (e) {
-      // A slice this steward cannot read or prove: no block this tick.
+      // A slice this keeper cannot read or prove: no block this tick.
       log?.call('no block this tick: $e');
       return;
     } finally {
@@ -417,7 +417,7 @@ class ChainNode {
 
   final _proving = <String>{};
 
-  /// Posts today's holding proof for each partition this steward declared
+  /// Posts today's holding proof for each partition this keeper declared
   /// before today, once.
   void _holdingProofs(ChainState head, Map<int, String> mine, int tick) {
     if (mine.isEmpty || head.beacon.isEmpty && head.day == 0) return;
@@ -432,7 +432,7 @@ class ChainNode {
       final id = '$day:$p:${head.beacon}';
       if (!_proving.add(id)) continue;
       unawaited(
-        steward!
+        keeper!
             .prove(holdChallenge(head.beacon, day, key, p), p, e.value)
             .then<void>((proof) {
               submit(TxType.holdingProof, {'day': day, 'proof': proof.toJson()});
@@ -558,7 +558,7 @@ class ChainNode {
     }
   }
 
-  static const _known = {'block', 'tx', 'get', 'header', 'fraud', 'entry', 'snapshot', 'part'};
+  static const _known = {'block', 'tx', 'get', 'header', 'fraud', 'entry', 'snapshot', 'part', 'getCheckpoint'};
 
   /// Transactions waiting to go into a block.
   Iterable<Tx> get waiting => _mempool.values;
@@ -590,6 +590,17 @@ class ChainNode {
             if (reply != null) _sendLarge(from, {...reply, 'id': msg['id']});
           }),
         );
+      case 'getCheckpoint':
+        // A node that starts late (or restarted from a snapshot) has no
+        // blocks before its base, so a newcomer starts from a recent header
+        // instead of genesis: our head, with its chain weight.
+        final b = _head.block;
+        _send(from, {
+          't': 'checkpoint',
+          'id': msg['id'],
+          if (b != null) 'header': Header.of(b).toJson(),
+          'work': _head.work.toString(),
+        });
       case 'entry' when msg['keys'] != null:
         _answerEntry(from, msg);
       case 'snapshot' when msg['entries'] == null:

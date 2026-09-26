@@ -132,6 +132,43 @@ void main() {
     sb = await waitFor(b, (s) => (chainOf(s)['balance'] as int) > balanceBefore, what: 'the claim is paid');
     print('joiner: ${(chainOf(sb)['balance'] as int) / m} marcas after the claim');
 
+    // The admin sets how the circle is read; once anchored, the joiner
+    // buys a pass.
+    r = await a.handle('chainReading', {'passPrice': '2', 'freeAllowance': 50 * 1024 * 1024, 'memberScore': 0});
+    expect(r['error'], isNull);
+    sb = await waitFor(
+      b,
+      (s) => (chainOf(s)['reading'] as Map?)?['passPrice'] == 2 * m,
+      what: 'the reading settings are anchored',
+    );
+    final beforePass = chainOf(sb)['balance'] as int;
+    r = await b.handle('chainBuyPass', {});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    sb = await waitFor(b, (s) => (chainOf(s)['reading'] as Map?)?['myPass'] != null, what: 'the pass is on the chain');
+    expect(chainOf(sb)['balance'], beforePass - 2 * m);
+
+    // A phone follows lightly: headers and proven reads, nothing kept.
+    final c = await open('phone');
+    r = await c.handle('chainJoin', {'invite': invite, 'light': true});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    var sc = await waitFor(
+      c,
+      (s) => chainOf(s)['light'] == true && (chainOf(s)['height'] as int) > 0,
+      what: 'the phone follows',
+    );
+    r = await a.handle('chainSend', {'to': (await me(c))['npub'], 'amount': '3'});
+    expect(r['error'], isNull);
+    sc = await waitFor(c, (s) => chainOf(s)['balance'] == 3 * m, what: 'the phone reads its balance with a proof');
+    r = await c.handle('chainSend', {'to': (await me(a))['npub'], 'amount': '1'});
+    expect(r['error'], isNull, reason: 'a light device sends too');
+    await waitFor(
+      c,
+      (s) => chainOf(s)['balance'] == 2 * m && chainOf(s)['pending'] == 0,
+      what: 'the phone\'s payment went in',
+    );
+    expect((chainOf(sc)['partitions'] as List), isEmpty);
+    await c.close();
+
     // Both restart from their snapshots and carry on.
     await Future<void>.delayed(const Duration(seconds: 31)); // a snapshot is saved every 30 s
     await a.close();
@@ -140,7 +177,23 @@ void main() {
     b = await open('joiner');
     sa = await waitFor(a, (s) => (chainOf(s)['height'] as int? ?? 0) > heightBefore, what: 'the founder resumes');
     sb = await waitFor(b, ready, what: 'the joiner resumes', seconds: 60);
-    await a.close();
-    await b.close();
+
+    // Newcomers after the founder restarted: its node keeps no blocks older
+    // than its snapshot, so they start from its checkpoint.
+    final late = await open('late'), lateLight = await open('late-phone');
+    r = await late.handle('chainJoin', {'invite': invite});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    r = await lateLight.handle('chainJoin', {'invite': invite, 'light': true});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    await waitFor(late, ready, what: 'a late full node joins from the checkpoint', seconds: 90);
+    final heightNow = chainOf(await a.handle('state', {}))['height'] as int;
+    await waitFor(
+      lateLight,
+      (s) => (chainOf(s)['height'] as int? ?? 0) >= heightNow && chainOf(s)['balance'] == 0,
+      what: 'a late phone follows from the checkpoint',
+    );
+    for (final c in [late, lateLight, a, b]) {
+      await c.close();
+    }
   }, timeout: const Timeout(Duration(minutes: 5)));
 }

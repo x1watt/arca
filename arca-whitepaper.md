@@ -1,4 +1,4 @@
-# Arca: Proof of Stewardship
+# Arca: Proof of Keeping
 
 Arca is a shared library of files that people everywhere build together, the way Wikipedia is built for articles. Anyone can add files, anyone can search them, and the people who keep them safe are paid for it in one coin, the marca. Communities called circles curate their own collections; one global blockchain, with fixed rules and no owner, pays them for keeping what others want kept.
 
@@ -14,7 +14,7 @@ Arca gives files what Wikipedia gave articles.
 - One way to find them. Every circle publishes a catalog and a search index that anyone can verify by recomputing a sample.
 - Many hands keeping them. People follow the collections they care about, keep a copy on their own disks, and are paid in marcas for keeping what other people also keep and read.
 
-The money comes from mining, in the style of Proof of Capacity (Signum) and Arweave: disk space is the mining input. Arca points that disk at the library itself. Mining power is stewardship of files people chose to keep, so the more meaningful data people keep, the stronger the network.
+The money comes from mining, in the style of Proof of Capacity (Signum) and Arweave: disk space is the mining input. Arca points that disk at the library itself. Mining power is keeping of files people chose to keep, so the more meaningful data people keep, the stronger the network.
 
 ## 2. Who does what
 
@@ -22,22 +22,22 @@ A reader browses, searches and downloads. They need no account and no coins. Eve
 
 A contributor proposes files, folders and descriptions to a collection. Contributing costs nothing, and the chain pays contributors nothing directly; a circle may pay them from its own pool.
 
-A steward keeps collections on disk, proves it every day, and serves downloads. Stewards earn marcas from the global chain through their circle's pool, get free access to everything they keep, and receive pass revenue for the bytes they serve.
+A keeper keeps collections on disk, proves it every day, and serves downloads. Keepers earn marcas from the global chain through their circle's pool, get free access to everything they keep, and receive pass revenue for the bytes they serve.
 
 A moderator reviews proposals, admits members, and signs the circle's index and log. Moderators receive a share of the pool if the circle's policy says so.
 
-A circle is a community with its own collections, rules, log and pool. It earns marcas through its members' stewardship and shares them by its own payout policy. It also earns trust, which is shown in search results.
+A circle is a community with its own collections, rules, log and pool. It earns marcas through its members' keeping and shares them by its own payout policy. It also earns trust, which is shown in search results.
 
 The global chain is the one blockchain. It issues marcas, records who keeps what, pays the pools and sells passes. It has no owner, no admin, no moderators and no servers of its own.
 
-The flow in one breath: a contributor proposes a file for free; moderators accept it into a collection; stewards follow the collection and keep it on disk; their daily proofs go to the global chain; the chain pays marcas to the circle's pool; the circle shares the pool by its policy; readers download from the stewards, free within the allowance or with a pass.
+The flow in one breath: a contributor proposes a file for free; moderators accept it into a collection; keepers follow the collection and keep it on disk; their daily proofs go to the global chain; the chain pays marcas to the circle's pool; the circle shares the pool by its policy; readers download from the keepers, free within the allowance or with a pass.
 
 ## 3. Principles
 
 1. Bytes are bytes. The network cannot tell a treasure from junk. People decide what matters, inside circles; the chain only measures who keeps what and who pays to read it.
 2. Contributing is free. Nobody pays to add files. Review, member quotas and trust decide what gets in, never who can afford it.
 3. Nothing is forced on anyone. No node must hold any file, any catalog or any index it did not choose. The global chain holds no entry per file.
-4. Every copy is unique to its keeper. Packing makes the bytes on disk differ per steward, so one disk cannot pretend to be a hundred.
+4. Every copy is unique to its keeper. Packing makes the bytes on disk differ per keeper, so one disk cannot pretend to be a hundred.
 5. Mining power is bytes kept, not disk speed. A global clock limits proofs, so faster hardware gains nothing.
 6. Pay for interest, not for supply. Bytes alone earn little. Data earns when people outside its own circle keep it or pay to read it.
 7. Free activity never counts. Free downloads, searches, clicks and request counts feed no reward and no ranking, because they cost nothing to fake.
@@ -48,7 +48,7 @@ The flow in one breath: a contributor proposes a file for free; moderators accep
 
 A circle is a community: members, moderators, collections, rules. Everyone who contributes or keeps files does it through at least one circle, so every file in the library has passed some community's curation. There is no solo mining and no solo sharing.
 
-**Creating a circle** burns a fixed fee in marcas, roughly what a steward earns in a month of keeping one partition. Nobody starts with marcas, so a founder first keeps files in an existing circle, earns with patience, and then opens their own. This keeps fake circles expensive and gives every founder a track record. The genesis circles (Wikipedia, OpenStreetMap, Project Gutenberg) are open to all, so there is always somewhere to start.
+**Creating a circle** burns a fixed fee in marcas, roughly what a keeper earns in a month of keeping one partition. Nobody starts with marcas, so a founder first keeps files in an existing circle, earns with patience, and then opens their own. This keeps fake circles expensive and gives every founder a track record. The genesis circles (Wikipedia, OpenStreetMap, Project Gutenberg) are open to all, so there is always somewhere to start.
 
 **Governance.** Seven rules, and nothing else.
 
@@ -79,7 +79,7 @@ Typical settings: a public commons is open on every dial; a community archive is
 
 **Disconnected circles.** A circle that cannot reach the global chain keeps its library: log, collections, review and search work among whoever can still reach each other. It loses its money: after a time the admin sets (for example 6 hours), no passes are sold, passes already bought stay valid until they expire, and the pool earns nothing. Access falls back to the admin's choice: free for everyone, or members only. On reconnection the circle anchors again and earns from then on.
 
-**Forking is the real check.** Chunks are content-addressed and packing is keyed to the steward, not the circle. Members who dislike their moderators take their packed disks, start a new log with a new membership, pay the circle fee, and are earning for the new pool the same day. No governance can extract more than the cost of that fork.
+**Forking is the real check.** Chunks are content-addressed and packing is keyed to the keeper, not the circle. Members who dislike their moderators take their packed disks, start a new log with a new membership, pay the circle fee, and are earning for the new pool the same day. No governance can extract more than the cost of that fork.
 
 ## 5. Collections
 
@@ -91,7 +91,7 @@ A collection is a tree of folders and files that a circle builds together: "Port
 
 Each collection has one of three roles. Open: any member proposes, moderators or maintainers accept. Curated: only maintainers propose, other maintainers or moderators accept. Personal: the owner edits directly, with no review.
 
-**Following.** A client follows a collection by watching its version in the circle log and fetching only what changed. A follower keeps it in one of two ways, and the default is both: as a mirror, plain files in a local folder kept in sync for everyday use, offline included; and as a steward, a packed copy that can be proven daily, which earns marcas and keeps the collection safe. Removed files leave a mirror only if the follower chooses.
+**Following.** A client follows a collection by watching its version in the circle log and fetching only what changed. A follower keeps it in one of two ways, and the default is both: as a mirror, plain files in a local folder kept in sync for everyday use, offline included; and as a keeper, a packed copy that can be proven daily, which earns marcas and keeps the collection safe. Removed files leave a mirror only if the follower chooses.
 
 **Across circles.** A collection may include files held in another circle, and anyone can copy a collection into their own circle with its full history. A circle's collection is what the circle curates, not what it owns.
 
@@ -109,17 +109,17 @@ The global chain is the one blockchain, run together by the machines of every ci
 
 **Small by design.** State holds balances, circle anchors, standing, pool accounts, open passes, declared holdings and the live bitmaps (one bit per 256 KB chunk, about 5 GB per 10 PB of data). Nothing is stored per file. Headers grow about 1.5 GB a year and prune to checkpoints. A full node for a library of petabytes fits on a small SSD.
 
-## 7. Keeping files: Proof of Stewardship
+## 7. Proof of Keeping
 
 **Corpus.** Accepted files are split into 256 KB chunks and appended to one global content-addressed corpus with a single Merkle root. The same chunk in a hundred circles is one chunk. Only live chunks are mineable: those in the current version of a public collection of a circle whose anchor is under 24 hours old. Removed data stays live for a 30-day grace period so a revert loses nothing, then may be deleted.
 
-**Partitions.** The corpus is cut into partitions of 32 to 64 GB. A steward declares which partitions they keep. A phone with 128 GB free keeps two.
+**Partitions.** The corpus is cut into partitions of 32 to 64 GB. A keeper declares which partitions they keep. A phone with 128 GB free keeps two.
 
-**Packing.** A steward stores each chunk XOR a memory-hard function (such as RandomX) of their own key and the chunk position. Packing costs 1,000 to 10,000 times more than reading, so it is cheaper to keep a real disk than to regenerate or fetch data on demand, and no disk can answer for another steward's copy. Stewards who serve files keep an optional unpacked copy.
+**Packing.** A keeper stores each chunk XOR a memory-hard function (such as RandomX) of their own key and the chunk position. Packing costs 1,000 to 10,000 times more than reading, so it is cheaper to keep a real disk than to regenerate or fetch data on demand, and no disk can answer for another keeper's copy. Keepers who serve files keep an optional unpacked copy.
 
-**Clock-limited mining.** A hash chain ticks once a second and names random chunks and 1 KB slices in every partition. Stewards read the named slices from their packed copies and hash them against the block signature; the lowest result wins the block, as in Signum. A faster disk gains nothing; only more partitions gain. A Raspberry Pi with used hard disks competes. Steady-state energy is disk reads plus an idle CPU.
+**Clock-limited mining.** A hash chain ticks once a second and names random chunks and 1 KB slices in every partition. Keepers read the named slices from their packed copies and hash them against the block signature; the lowest result wins the block, as in Signum. A faster disk gains nothing; only more partitions gain. A Raspberry Pi with used hard disks competes. Steady-state energy is disk reads plus an idle CPU.
 
-**Daily holding proofs.** Each day the clock names one random chunk in each steward's declared partitions, and the steward posts a 2 KB proof: the slice, its Merkle paths, and the packing. A missed or wrong proof drops all of that steward's declarations and resets their scores, so claiming a partition you do not hold is caught within days and costs everything built up. Declared partitions are therefore a true count of copies.
+**Daily holding proofs.** Each day the clock names one random chunk in each keeper's declared partitions, and the keeper posts a 2 KB proof: the slice, its Merkle paths, and the packing. A missed or wrong proof drops all of that keeper's declarations and resets their scores, so claiming a partition you do not hold is caught within days and costs everything built up. Declared partitions are therefore a true count of copies.
 
 **Proof size.** One 1 KB slice, 8 hashes inside the chunk, about 22 hashes to the corpus root, and the packing proof: about 2 KB. A block header is about 3 KB.
 
@@ -133,15 +133,15 @@ One coin, the marca (plural marcas, short for Money Arca). Only the global chain
 
 **The replication curve.** For each partition and each collection, the reward is shared among its keepers on a curve with a target of 10 copies. A single copy earns little: it is fragile, and its keeper wants company. From the second copy to the tenth, the reward per copy rises with each new keeper. From the eleventh on, the total is frozen at ten keepers' worth and split among all, so every extra copy takes a slice from everyone. The incentive is to be one of the first ten keepers of something worth keeping, and to leave over-replicated data to others.
 
-**Interest and standing.** The interest of a collection comes from three sources only: a fixed seed for the genesis corpora; marcas burned reading it over the last 30 days by people who are not members of its circle; and one third of the standing of stewards from outside its circle who keep it, each divided by the number of collections they keep.
+**Interest and standing.** The interest of a collection comes from three sources only: a fixed seed for the genesis corpora; marcas burned reading it over the last 30 days by people who are not members of its circle; and one third of the standing of keepers from outside its circle who keep it, each divided by the number of collections they keep.
 
-A steward's standing is the sum of their shares of the interest of the collections they keep, following the replication curve, recomputed once a day. Standing flows outward: from public-domain data and paid reading, through the people who keep them, to whatever those people also keep. The interest budget is paid to stewards in proportion to standing.
+A keeper's standing is the sum of their shares of the interest of the collections they keep, following the replication curve, recomputed once a day. Standing flows outward: from public-domain data and paid reading, through the people who keep them, to whatever those people also keep. The interest budget is paid to keepers in proportion to standing.
 
 Two consequences. A circle whose members keep only their own archive and nothing else earns storage but no interest; to earn interest, others must be interested, or the members must also keep what others keep. And because only one third of standing passes on, nobody can lift their income above 1.5 times what their keeping of others' data earns, however much junk or how many keys they add.
 
-**Books versus video.** Circle A curates 100 books, 100 MB. Circle B curates one video, 1 TB. In a library of 10 PB with equal interest in both, A's stewards and B's stewards earn about the same: B a little more from the storage budget, having spent 10,000 times the disk for it. Per byte, A is paid thousands of times better. Nobody keeps the video for the money; they keep it because members want it. If the video is genuinely wanted, its interest rises and its keepers are paid for that.
+**Books versus video.** Circle A curates 100 books, 100 MB. Circle B curates one video, 1 TB. In a library of 10 PB with equal interest in both, A's keepers and B's keepers earn about the same: B a little more from the storage budget, having spent 10,000 times the disk for it. Per byte, A is paid thousands of times better. Nobody keeps the video for the money; they keep it because members want it. If the video is genuinely wanted, its interest rises and its keepers are paid for that.
 
-**Pools and payout.** Every proof names the circle it is made for, and the steward's earnings go to that circle's pool. The admin sets a payout policy, published in every anchor as a table of member shares; members claim from the global chain with a Merkle proof. A suggested default is 45% to stewards by sync score, 45% to contributors by how much their accepted files are kept and read, and 10% to moderators and indexers. Any split is allowed. Payouts are public, so a circle that treats members badly loses them to another circle or to a fork, as with mining pools.
+**Pools and payout.** Every proof names the circle it is made for, and the keeper's earnings go to that circle's pool. The admin sets a payout policy, published in every anchor as a table of member shares; members claim from the global chain with a Merkle proof. A suggested default is 45% to keepers by sync score, 45% to contributors by how much their accepted files are kept and read, and 10% to moderators and indexers. Any split is allowed. Payouts are public, so a circle that treats members badly loses them to another circle or to a fork, as with mining pools.
 
 **What is free and what is paid.** New marcas go to circle pools by proven keeping, through the storage and interest budgets. Pools pay their members by the circle's policy. Readers beyond the free allowance pay for a pass: half is burned and half goes to the servers in proportion to bytes delivered. A founder burns the circle creation fee. Contributing, reviewing, the free allowance and member access cost nothing.
 
@@ -177,7 +177,7 @@ Everyone can read, in three ways, with limits set by each circle's admin. The fr
 
 The catalog of a billion public files is about 3 TB, so the whole library's catalog fits on one 4 TB disk beside a full node. Users take the catalog of every circle or only of the circles they care about, full text for some, previews for those they browse; search runs locally over what is held and asks gateways for the rest, marked as remote.
 
-**Protection against garbage.** Nothing per file is on the chain, and nobody takes a circle's catalog unless they subscribe. Manifests are corpus chunks, so publishing a catalog means keeping it, packed and proven daily, and a circle's catalog may be at most 1% of the public bytes its stewards keep. A saboteur who wants to publish 300 TB of junk records must first keep 30 PB, and even then only subscribers carry it. Clients subscribe by default only to circles above a trust threshold and show the disk cost before subscribing.
+**Protection against garbage.** Nothing per file is on the chain, and nobody takes a circle's catalog unless they subscribe. Manifests are corpus chunks, so publishing a catalog means keeping it, packed and proven daily, and a circle's catalog may be at most 1% of the public bytes its keepers keep. A saboteur who wants to publish 300 TB of junk records must first keep 30 PB, and even then only subscribers carry it. Clients subscribe by default only to circles above a trust threshold and show the disk cost before subscribing.
 
 **Ranking** never enters consensus. Clients mix signals with known faking costs: copies kept (availability), age, burns per byte (money spent), trust of the circles that include the file, and pins from keys in the user's own web of trust. Curators publish weightings and lists the way they publish collections.
 
@@ -199,7 +199,7 @@ Two circles endorsing each other are capped: only one third of standing passes p
 
 Claiming partitions you do not keep is caught by the daily random proof on a uniquely packed copy; one failure drops everything.
 
-Faking copies from one disk fails because packing is per steward and costs 1,000 to 10,000 times more than reading.
+Faking copies from one disk fails because packing is per keeper and costs 1,000 to 10,000 times more than reading.
 
 Fetching proofs from the cloud loses the race: reads are clock-limited and random, and a local disk beats the network by orders of magnitude.
 
@@ -217,7 +217,7 @@ A wrong state in a block is undone by a fraud proof within 24 hours; one honest 
 
 Locating servers by timing is impossible, because no timing data ever leaves the measuring client.
 
-Illegal content is refused by stewards, who lose only those tickets, rejected by moderators, and filtered by front-ends with exact and perceptual blocklists.
+Illegal content is refused by keepers, who lose only those tickets, rejected by moderators, and filtered by front-ends with exact and perceptual blocklists.
 
 ## 12. Open problems and first prototype
 
@@ -231,7 +231,7 @@ Illegal content is refused by stewards, who lose only those tickets, rejected by
 - Pool payouts at scale: a pool with a million members needs batched claims.
 - Global partitions: a long split of the internet forks the money chain; circles in regions often cut off depend on disconnected mode.
 - Member privacy: serving only to members tells the server which key asked; an anonymous membership proof would fix it.
-- Packing asymmetry: cheap unpacking with expensive packing would let stewards serve straight from packed copies.
+- Packing asymmetry: cheap unpacking with expensive packing would let keepers serve straight from packed copies.
 
 **Suggested order.**
 
@@ -246,9 +246,9 @@ Illegal content is refused by stewards, who lose only those tickets, rejected by
 
 ## 13. Naming
 
-Arca is Latin and Portuguese for a chest or ark, the root of "archive": a chest each circle keeps, and the ark that carries things across a partition. Marca is short for Money Arca, and also Portuguese for a mark: the mark a circle earns by keeping the library well. The consensus is Proof of Stewardship, because the input is not raw space or time but the keeping of data someone chose to keep.
+Arca is Latin and Portuguese for a chest or ark, the root of "archive": a chest each circle keeps, and the ark that carries things across a partition. Marca is short for Money Arca, and also Portuguese for a mark: the mark a circle earns by keeping the library well. The consensus is Proof of Keeping, because the input is not raw space or time but the keeping of data someone chose to keep.
 
-Parts: corpus (all the data), chunk (256 KB of it), partition (32 to 64 GB of it), circle (a community), collection (a tree of folders and files), manifest (a file's description), proposal (a suggested edit), steward (someone who keeps and proves), moderator (someone who reviews and indexes), circle log (a circle's record), anchor (its hourly checkpoint on the global chain), pool (a circle's earnings), standing (a steward's earned weight), interest (what the wider library wants), pass (24 hours of full-speed reading), sync score (how much of a circle a member keeps), shard (an index file), trust (a circle's public standing in search). Plain nouns that survive translation.
+Parts: corpus (all the data), chunk (256 KB of it), partition (32 to 64 GB of it), circle (a community), collection (a tree of folders and files), manifest (a file's description), proposal (a suggested edit), keeper (someone who keeps and proves), moderator (someone who reviews and indexes), circle log (a circle's record), anchor (its hourly checkpoint on the global chain), pool (a circle's earnings), standing (a keeper's earned weight), interest (what the wider library wants), pass (24 hours of full-speed reading), sync score (how much of a circle a member keeps), shard (an index file), trust (a circle's public standing in search). Plain nouns that survive translation.
 
 ## Appendix A. Manifest fields
 

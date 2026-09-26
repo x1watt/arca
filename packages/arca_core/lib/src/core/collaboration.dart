@@ -139,10 +139,13 @@ extension _Collaboration on CoreService {
           if (blobs == null) return false;
           final target = '${col.folder}/$path';
           final author = col.moderators.where((m) => m['pubkey'] == change.pubkey).firstOrNull?['address'];
-          final r = await blobs.fetch(sha, (op['size'] as num?)?.toInt() ?? 0, [
-            ...?(op['providers'] as List?)?.cast<String>(),
-            ?author,
-          ], target);
+          final r = await blobs.fetch(
+            sha,
+            (op['size'] as num?)?.toInt() ?? 0,
+            [...?(op['providers'] as List?)?.cast<String>(), ?author],
+            target,
+            reader: await _readerSession(profileId),
+          );
           if (!r.ok) return false;
           await lib.adopt(
             col.id,
@@ -413,6 +416,7 @@ extension _Collaboration on CoreService {
             file.size,
             [...file.providers, ...providers],
             target,
+            reader: await _readerSession(profileId),
             onProgress: (n) {
               s.bytes = base + n;
               if (DateTime.now().difference(lastPush) > const Duration(milliseconds: 500)) {

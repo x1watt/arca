@@ -55,7 +55,7 @@ void main() {
     );
   });
 
-  test('stewards declare and drop partitions for a circle', () async {
+  test('keepers declare and drop partitions for a circle', () async {
     final s = genesis()..apply(Tx.sign(alice, TxType.createCircle, 0, {'circle': 'commons'}));
     await s.apply(
       Tx.sign(bob, TxType.declare, 0, {

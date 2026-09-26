@@ -12,7 +12,7 @@
 //   transaction step);
 // - the entries the step touches, each proven present or absent in its
 //   namespace; a namespace the step goes through as a whole (a day's
-//   settlement goes through every steward) comes whole;
+//   settlement goes through every keeper) comes whole;
 // - the trace entry after the step, with its path.
 //
 // The verifier builds a state from those entries alone, runs the step and
@@ -67,6 +67,10 @@ class Header {
   String get corpusRoot => fields['corpusRoot'] as String;
   Map<String, Object?> get proof => (fields['proof'] as Map).cast<String, Object?>();
 
+  /// The block this header describes, without its transactions (a node
+  /// that starts from a checkpoint knows its base by its header).
+  Block get asBlock => _asBlock;
+
   Block get _asBlock => Block(
     height: height,
     prev: prev,
@@ -81,6 +85,7 @@ class Header {
     target: target,
     traceRoot: traceRoot,
     trace: const [],
+    headerTxCount: txCount,
   );
 
   /// The block hash (the header's, transactions are behind [txRoot]).

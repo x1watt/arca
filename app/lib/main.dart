@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
 import 'core/core_client.dart';
+import 'core/power.dart';
 import 'core/playback.dart';
 
 import 'screens/collections_screen.dart';
@@ -17,9 +18,11 @@ Future<void> main() async {
   runApp(const ArcaApp());
   // The media player is set up once the first screen is drawn, so the
   // first video opens without waiting for it (core/playback.dart).
-  WidgetsBinding.instance.addPostFrameCallback(
-    (_) => Playback.instance.warmUp(),
-  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    Playback.instance.warmUp();
+    // Battery and connection, for the chain's power choices.
+    PowerWatch.instance.start();
+  });
 }
 
 class ArcaApp extends StatelessWidget {

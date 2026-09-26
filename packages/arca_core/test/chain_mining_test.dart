@@ -31,7 +31,7 @@ void main() {
   late Directory tmp;
   late Corpus corpus;
   late Map<String, String> files;
-  final stewardKey = generateSecretKey(), otherKey = generateSecretKey(), faucet = generateSecretKey();
+  final keeperKey = generateSecretKey(), otherKey = generateSecretKey(), faucet = generateSecretKey();
   String pk(List<int> k) => toHex(publicKeyOf(k));
 
   setUp(() async {
@@ -58,7 +58,7 @@ void main() {
     partitionSizes: [for (var i = 0; i < corpus.partitions; i++) corpus.chunksIn(i)],
   );
 
-  Steward steward(List<int> key) => Steward(
+  Keeper keeper(List<int> key) => Keeper(
     params: p,
     key: pk(key),
     corpus: corpus,
@@ -66,30 +66,30 @@ void main() {
     files: files,
   );
 
-  test('a packed slice proves up to the corpus, and only for its own steward and challenge', () async {
+  test('a packed slice proves up to the corpus, and only for its own keeper and challenge', () async {
     expect(corpus.partitions, 2);
-    final s = steward(stewardKey);
+    final s = keeper(keeperKey);
     await s.pack(0);
     final challenge = mineChallenge('', 1);
     final proof = await s.prove(challenge, 0, 'commons');
     final sizes = [corpus.chunksIn(0), corpus.chunksIn(1)];
     expect(await proof.check(p, challenge, corpus.rootHex, sizes), isNull);
     expect(await SliceProof.fromJson(proof.toJson()).check(p, mineChallenge('', 2), corpus.rootHex, sizes), isNotNull);
-    // The same bytes claimed by another steward do not unpack.
-    final stolen = SliceProof.fromJson({...proof.toJson(), 'steward': pk(otherKey)});
+    // The same bytes claimed by another keeper do not unpack.
+    final stolen = SliceProof.fromJson({...proof.toJson(), 'keeper': pk(otherKey)});
     expect(await stolen.check(p, challenge, corpus.rootHex, sizes), isNotNull);
   });
 
   /// A mined block by [key] at [tick] on [state], with [txs].
   Future<Block> mine(ChainState state, List<int> key, int tick, [List<Tx> txs = const []]) async {
     final part = state.declarations[pk(key)]!.keys.first;
-    final proof = await steward(key).prove(mineChallenge(state.head, tick), part, 'commons');
+    final proof = await keeper(key).prove(mineChallenge(state.head, tick), part, 'commons');
     return Block.produce(state, key, txs, tick: tick, proof: proof.toJson());
   }
 
   Future<ChainState> declared(List<int> key, int partition) async {
     final state = genesis();
-    await steward(key).pack(partition);
+    await keeper(key).pack(partition);
     final b = await Block.produce(state, faucet, [
       Tx.sign(key, TxType.declare, 0, {
         'circle': 'commons',
@@ -99,9 +99,9 @@ void main() {
     return b.applyTo(state);
   }
 
-  test('a steward mines; blocks create no marcas themselves; blocks without a fair proof are refused', () async {
-    var state = await declared(stewardKey, 0);
-    final block = await mine(state, stewardKey, 2);
+  test('a keeper mines; blocks create no marcas themselves; blocks without a fair proof are refused', () async {
+    var state = await declared(keeperKey, 0);
+    final block = await mine(state, keeperKey, 2);
     final next = await Block.fromJson(block.toJson()).applyTo(state);
     expect(next.height, state.height + 1);
     expect(next.issued, state.issued, reason: 'issuance is paid as each day closes (chain_rewards_test)');
@@ -112,55 +112,55 @@ void main() {
       throwsA(isA<ChainError>()),
     );
     state.target = BigInt.one;
-    await expectLater(mine(state, stewardKey, 2), throwsA(predicate((e) => '$e'.contains('target'))));
+    await expectLater(mine(state, keeperKey, 2), throwsA(predicate((e) => '$e'.contains('target'))));
   });
 
-  test('a steward that misses a day\'s holding proof loses its declarations; one that proves keeps them', () async {
+  test('a keeper that misses a day\'s holding proof loses its declarations; one that proves keeps them', () async {
     for (final prove in [true, false]) {
-      var state = await declared(stewardKey, 0);
-      // Day 1: the first block opens it; the steward proves (or not).
-      state = await (await mine(state, stewardKey, 100)).applyTo(state);
+      var state = await declared(keeperKey, 0);
+      // Day 1: the first block opens it; the keeper proves (or not).
+      state = await (await mine(state, keeperKey, 100)).applyTo(state);
       expect(state.day, 1);
       if (prove) {
-        final proof = await steward(stewardKey).prove(holdChallenge(state.beacon, 1, pk(stewardKey), 0), 0, 'commons');
-        final tx = Tx.sign(stewardKey, TxType.holdingProof, 0, {'day': 1, 'proof': proof.toJson()});
-        final block = await mine(state, stewardKey, 101, [tx]);
+        final proof = await keeper(keeperKey).prove(holdChallenge(state.beacon, 1, pk(keeperKey), 0), 0, 'commons');
+        final tx = Tx.sign(keeperKey, TxType.holdingProof, 0, {'day': 1, 'proof': proof.toJson()});
+        final block = await mine(state, keeperKey, 101, [tx]);
         expect(block.txs, hasLength(1), reason: 'a valid holding proof is included');
         state = await block.applyTo(state);
       }
       // Day 2 opens: the check runs.
-      state = await (await mine(state, stewardKey, 200)).applyTo(state);
-      expect(state.declarations.containsKey(pk(stewardKey)), prove, reason: prove ? 'proved, kept' : 'missed, dropped');
+      state = await (await mine(state, keeperKey, 200)).applyTo(state);
+      expect(state.declarations.containsKey(pk(keeperKey)), prove, reason: prove ? 'proved, kept' : 'missed, dropped');
     }
   });
 
   test('a holding proof for someone else\'s partition or the wrong slice is refused', () async {
-    var state = await declared(stewardKey, 0);
-    state = await (await mine(state, stewardKey, 100)).applyTo(state);
-    final good = await steward(stewardKey).prove(holdChallenge(state.beacon, 1, pk(stewardKey), 0), 0, 'commons');
-    final wrongSlice = await steward(stewardKey).prove(mineChallenge('x', 1), 0, 'commons');
+    var state = await declared(keeperKey, 0);
+    state = await (await mine(state, keeperKey, 100)).applyTo(state);
+    final good = await keeper(keeperKey).prove(holdChallenge(state.beacon, 1, pk(keeperKey), 0), 0, 'commons');
+    final wrongSlice = await keeper(keeperKey).prove(mineChallenge('x', 1), 0, 'commons');
     await expectLater(
-      state.copy().apply(Tx.sign(stewardKey, TxType.holdingProof, 0, {'day': 1, 'proof': wrongSlice.toJson()})),
+      state.copy().apply(Tx.sign(keeperKey, TxType.holdingProof, 0, {'day': 1, 'proof': wrongSlice.toJson()})),
       throwsA(isA<ChainError>()),
     );
     await expectLater(
       state.copy().apply(Tx.sign(otherKey, TxType.holdingProof, 0, {'day': 1, 'proof': good.toJson()})),
       throwsA(isA<ChainError>()),
     );
-    await state.copy().apply(Tx.sign(stewardKey, TxType.holdingProof, 0, {'day': 1, 'proof': good.toJson()}));
+    await state.copy().apply(Tx.sign(keeperKey, TxType.holdingProof, 0, {'day': 1, 'proof': good.toJson()}));
   });
 
   test('a block with a forged mining proof is refused, and a fraud proof shows it to light clients', () async {
     final state = genesis();
-    await steward(stewardKey).pack(0);
+    await keeper(keeperKey).pack(0);
     final b1 = await Block.produce(state, faucet, [
-      Tx.sign(stewardKey, TxType.declare, 0, {
+      Tx.sign(keeperKey, TxType.declare, 0, {
         'circle': 'commons',
         'partitions': [0],
       }),
     ], tick: 1);
     final s1 = await b1.applyTo(state);
-    final honest = await mine(s1, stewardKey, 2);
+    final honest = await mine(s1, keeperKey, 2);
     // Bytes made up to look like a slice: the quality is cheap to fake,
     // only the memory-hard check catches it.
     final forged = {...honest.proof, 'packed': toHex(List.filled(ChainParams.sliceBytes, 7))};
@@ -178,7 +178,7 @@ void main() {
       target: honest.target,
       traceRoot: honest.traceRoot,
       trace: honest.trace,
-    ).signedBy(stewardKey);
+    ).signedBy(keeperKey);
     expect(bad.quality, lessThan(bad.target), reason: 'a light client alone would take it');
     await expectLater(bad.applyTo(s1), throwsA(predicate((e) => '$e'.contains('bad mining proof'))));
     final proof = (await FraudProof.build(s1, Header.of(b1), bad))!;

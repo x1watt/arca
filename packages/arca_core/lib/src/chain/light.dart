@@ -84,7 +84,8 @@ class LightClient {
   String get finalHash {
     var h = _head;
     while (h.isNotEmpty) {
-      final k = _known[h]!;
+      final k = _known[h];
+      if (k == null) break; // below the checkpoint
       if (k.header!.tick + params.fraudWindowTicks <= currentTick) return h;
       h = k.header!.prev;
     }
@@ -104,19 +105,37 @@ class LightClient {
     await _sub?.cancel();
   }
 
+  /// Sends [m] to every full node this client follows (a transaction to
+  /// go into a block).
+  void broadcast(Map<String, Object?> m) {
+    for (final p in peers) {
+      _send(p, m);
+    }
+  }
+
   void _send(String to, Map<String, Object?> m) => unawaited(link.send(to, encodeChainMessage(m), from: address));
 
-  /// Asks one peer in turn for headers after the newest one we share.
+  bool _checkpointAsked = false;
+
+  /// Asks one peer in turn for headers after the newest one we share. A
+  /// client that knows nothing yet first asks for a checkpoint: full nodes
+  /// keep no blocks older than their snapshot, so the chain is followed
+  /// from a recent header, trusted from the first peer (whitepaper,
+  /// section 6: new nodes start from a snapshot, never from genesis).
   void _sync() {
     if (peers.isEmpty) return;
     final peer = peers.elementAt(_turn++ % peers.length);
+    if (_head.isEmpty && !_checkpointAsked) {
+      _checkpointAsked = true;
+      unawaited(_checkpoint(peer));
+    }
     final have = <String>[];
     var h = _head;
     var step = 1;
     while (h.isNotEmpty && have.length < 32) {
       have.add(h);
       for (var i = 0; i < step && h.isNotEmpty; i++) {
-        h = _known[h]!.header!.prev;
+        h = _known[h]?.header?.prev ?? ''; // stops at the checkpoint
       }
       if (have.length > 1) step *= 2;
     }
@@ -134,7 +153,7 @@ class LightClient {
         _accept(Header(Map<String, Object?>.from(_headerFields(b)), b['sig'] as String), m.from);
       case 'fraud':
         unawaited(_onFraud((msg['f'] as Map).cast<String, Object?>()));
-      case 'entry' || 'snapshot' when msg['id'] != null:
+      case 'entry' || 'snapshot' || 'checkpoint' when msg['id'] != null:
         _waiting.remove('${msg['id']}')?.complete(msg);
     }
   }
@@ -179,7 +198,7 @@ class LightClient {
     if (!h.signed) return false;
     if (h.proof.isNotEmpty) {
       final proof = SliceProof.fromJson(h.proof);
-      if (proof.steward != h.producer) return false;
+      if (proof.keeper != h.producer) return false;
       if (h.quality >= h.target) return false;
     }
     return true;
@@ -229,6 +248,20 @@ class LightClient {
       rejected.add(h);
     }
     _chooseHead();
+  }
+
+  Future<void> _checkpoint(String peer) async {
+    try {
+      final reply = await _ask(peer, {'t': 'getCheckpoint'});
+      final h = reply['header'] == null ? null : Header.fromJson(reply['header'] as Map);
+      if (h == null || !h.signed || _known.containsKey(h.hash) || rejected.contains(h.hash)) return;
+      _known[h.hash] = _Known(h, BigInt.parse(reply['work'] as String));
+      log?.call('checkpoint at ${h.height}');
+      _chooseHead();
+      _sync();
+    } catch (_) {
+      _checkpointAsked = false; // try again next time
+    }
   }
 
   Future<Map> _ask(String peer, Map<String, Object?> m) {

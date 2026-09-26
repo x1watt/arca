@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- I2P, and so every exchange with other devices, needs the network.
+         Debug builds get this permission added; release builds only have
+         what is declared here. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
         android:label="Arca"
         android:name="${applicationName}"

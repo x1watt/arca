@@ -1,5 +1,5 @@
 // The global chain's state (whitepaper, section 6): balances, circles with
-// their pools and anchors, stewards' declared partitions, and totals.
+// their pools and anchors, keepers' declared partitions, and totals.
 // Nothing per file. The state is committed as one Merkle root over its
 // entries in sorted order, so every node that applied the same blocks
 // holds the same root.
@@ -28,7 +28,7 @@ class CircleState {
   final String name;
   final List<String> moderators;
 
-  /// Marcas earned by the circle's stewards, waiting to be claimed.
+  /// Marcas earned by the circle's keepers, waiting to be claimed.
   int pool;
 
   /// The latest anchor (section 4): roots of the circle's log, public data,
@@ -136,7 +136,7 @@ class ChainState {
   /// Collection to (day to marcas burned for it by non-members).
   final burnsFor = StateMap<Map<int, int>>('burns');
 
-  /// Steward key to standing, recomputed as each day closes.
+  /// Keeper key to standing, recomputed as each day closes.
   final standing = StateMap<int>('standing');
 
   /// Open passes by the id of the transaction that bought them.
@@ -145,7 +145,7 @@ class ChainState {
   /// Circle to (member key to sync score), updated as each day closes.
   final syncScores = StateMap<Map<String, int>>('sync');
 
-  /// Steward key to (partition to the circle the keeping is for).
+  /// Keeper key to (partition to the circle the keeping is for).
   final declarations = StateMap<Map<int, String>>('declarations');
   int height = 0;
   int tick = 0;
@@ -153,7 +153,7 @@ class ChainState {
   int burned = 0;
   int issued = 0;
 
-  /// The corpus stewards prove against: its root and chunks per partition.
+  /// The corpus keepers prove against: its root and chunks per partition.
   /// Empty until set (then blocks need no mining proof, as at genesis).
   String corpusRoot = '';
   List<int> partitionSizes = [];
@@ -162,20 +162,20 @@ class ChainState {
   BigInt target = maxTarget;
 
   /// The current day and its beacon (the last block of the day before),
-  /// which picks each steward's slices for the day's holding proofs.
+  /// which picks each keeper's slices for the day's holding proofs.
   int day = 0;
   String beacon = '';
 
   /// The tick of genesis: days count from here.
   int genesisTick = 0;
 
-  /// How many stewards have declarations (kept so a block need not go
+  /// How many keepers have declarations (kept so a block need not go
   /// through them all to know whether mining needs a proof).
-  int stewards = 0;
+  int keepers = 0;
 
   int dayOf(int tick) => tick < genesisTick ? 0 : (tick - genesisTick) ~/ params.dayTicks;
 
-  /// Steward to (partition to the day it was declared), and to the day of
+  /// Keeper to (partition to the day it was declared), and to the day of
   /// its last holding proof.
   final declaredOn = StateMap<Map<int, int>>('declaredOn');
   final provenOn = StateMap<Map<int, int>>('provenOn');
@@ -255,7 +255,7 @@ class ChainState {
     'day': day,
     'beacon': beacon,
     'genesisTick': genesisTick,
-    'stewards': stewards,
+    'keepers': keepers,
   };
 
   set meta(Map<String, Object?> m) {
@@ -270,7 +270,7 @@ class ChainState {
     day = m['day'] as int;
     beacon = m['beacon'] as String;
     genesisTick = m['genesisTick'] as int;
-    stewards = m['stewards'] as int;
+    keepers = m['keepers'] as int;
   }
 
   static String _intMap(Map<int, Object?> m) => canonicalJson({for (final e in m.entries) '${e.key}': e.value});
@@ -458,7 +458,7 @@ class ChainState {
         if (partitionSizes.isNotEmpty && parts.any((p) => p >= partitionSizes.length)) {
           throw const ChainError('no such partition');
         }
-        if (!declarations.containsKey(tx.from)) stewards++;
+        if (!declarations.containsKey(tx.from)) keepers++;
         final mine = declarations.putIfAbsent(tx.from, () => {});
         final since = declaredOn.putIfAbsent(tx.from, () => {});
         for (final p in parts) {
@@ -473,7 +473,7 @@ class ChainState {
           declaredOn[tx.from]?.remove(p);
         }
         if (mine != null && mine.isEmpty) {
-          stewards--;
+          keepers--;
           declarations.remove(tx.from);
           declaredOn.remove(tx.from);
         }
@@ -521,7 +521,7 @@ class ChainState {
         pass.delivered[tx.from] = receipt.bytes;
       case TxType.holdingProof:
         final proof = SliceProof.fromJson(b['proof'] as Map);
-        if (proof.steward != tx.from) throw const ChainError('a steward proves only its own keeping');
+        if (proof.keeper != tx.from) throw const ChainError('a keeper proves only its own keeping');
         if (declarations[tx.from]?[proof.partition] != proof.circle) throw const ChainError('partition not declared');
         if ((b['day'] as int?) != day) throw const ChainError('a holding proof is for the current day');
         final why = await proof.check(
@@ -538,23 +538,23 @@ class ChainState {
     if (numbered) nonces[tx.from] = expected + 1;
   }
 
-  /// Closes the current day and opens [newDay]: every steward must have
+  /// Closes the current day and opens [newDay]: every keeper must have
   /// proven each partition it declared before the day began, or loses all
   /// its declarations (whitepaper, section 7).
   void startDay(int newDay) {
     if (newDay <= day) return;
-    for (final steward in declarations.keys.toList()) {
-      final since = declaredOn[steward] ?? const {};
-      final proven = provenOn[steward] ?? const {};
-      final missed = declarations[steward]!.keys.any((p) => (since[p] ?? day) < day && proven[p] != day);
+    for (final keeper in declarations.keys.toList()) {
+      final since = declaredOn[keeper] ?? const {};
+      final proven = provenOn[keeper] ?? const {};
+      final missed = declarations[keeper]!.keys.any((p) => (since[p] ?? day) < day && proven[p] != day);
       if (missed) {
-        stewards--;
-        declarations.remove(steward);
-        declaredOn.remove(steward);
-        provenOn.remove(steward);
-        standing.remove(steward);
+        keepers--;
+        declarations.remove(keeper);
+        declaredOn.remove(keeper);
+        provenOn.remove(keeper);
+        standing.remove(keeper);
         for (final scores in syncScores.values) {
-          scores.remove(steward);
+          scores.remove(keeper);
         }
       }
     }
@@ -639,7 +639,7 @@ class ChainState {
   }
 
   /// Whether [key] belongs to [circle]: its admin, a moderator, or a
-  /// steward keeping partitions for it. Burns by members do not raise the
+  /// keeper keeping partitions for it. Burns by members do not raise the
   /// interest of their own circle's collections.
   bool _isMember(String key, String circle) {
     final c = circles[circle];

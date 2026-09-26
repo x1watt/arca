@@ -2,13 +2,13 @@
 //
 // Clock: ticks of wall time (ChainParams.tickMillis); a tick's challenge is
 // SHA-256 of the previous block and the tick, so no producer can grind it
-// by varying its own block, and a faster disk gains nothing: each steward
+// by varying its own block, and a faster disk gains nothing: each keeper
 // reads one slice per declared partition per tick. (A verifiable delay
 // function replaces the wall clock later; see docs/architecture.md, 10.)
 //
 // A proof names a slice of a chunk of a partition: the packed bytes the
-// steward read, and the paths from that slice up to the corpus root. The
-// verifier recomputes the steward's keystream for that chunk (the costly
+// keeper read, and the paths from that slice up to the corpus root. The
+// verifier recomputes the keeper's keystream for that chunk (the costly
 // memory-hard part), unpacks the slice and climbs to the root.
 
 import 'dart:convert';
@@ -35,9 +35,9 @@ final maxTarget = (BigInt.one << 256) - BigInt.one;
 /// Challenge of [tick] on top of block [prev] (hex hash; '' for genesis).
 Uint8List mineChallenge(String prev, int tick) => _sha(['arca-mine', prev, tick]);
 
-/// Challenge of a steward's daily holding proof for [partition].
-Uint8List holdChallenge(String beacon, int day, String steward, int partition) =>
-    _sha(['arca-hold', beacon, day, steward, partition]);
+/// Challenge of a keeper's daily holding proof for [partition].
+Uint8List holdChallenge(String beacon, int day, String keeper, int partition) =>
+    _sha(['arca-hold', beacon, day, keeper, partition]);
 
 /// The chunk and slice a challenge names in a partition of [chunks] chunks;
 /// the slice is chosen once the chunk's length is known.
@@ -51,8 +51,8 @@ int challengedSlice(Uint8List challenge, int partition, int chunk, int chunkLeng
 
 /// How good a proof is: lower is better; a mining proof must be below the
 /// state's target.
-BigInt proofQuality(Uint8List challenge, String steward, Uint8List packedSlice) =>
-    _num(_sha(['arca-quality', challenge, steward, packedSlice]));
+BigInt proofQuality(Uint8List challenge, String keeper, Uint8List packedSlice) =>
+    _num(_sha(['arca-quality', challenge, keeper, packedSlice]));
 
 /// The work a block mined against [target] stands for: how many tries it
 /// takes on average to get under it (1 at the largest target).
@@ -66,7 +66,7 @@ List<ProofStep> _unpath(Object? j) => [for (final s in j as List) (fromHex((s as
 
 class SliceProof {
   const SliceProof({
-    required this.steward,
+    required this.keeper,
     required this.circle,
     required this.partition,
     required this.chunk,
@@ -78,7 +78,7 @@ class SliceProof {
     required this.partitionPath,
   });
 
-  final String steward;
+  final String keeper;
   final String circle;
   final int partition;
   final int chunk;
@@ -90,7 +90,7 @@ class SliceProof {
   final List<ProofStep> partitionPath;
 
   Map<String, Object?> toJson() => {
-    'steward': steward,
+    'keeper': keeper,
     'circle': circle,
     'partition': partition,
     'chunk': chunk,
@@ -103,7 +103,7 @@ class SliceProof {
   };
 
   factory SliceProof.fromJson(Map m) => SliceProof(
-    steward: m['steward'] as String,
+    keeper: m['keeper'] as String,
     circle: m['circle'] as String,
     partition: m['partition'] as int,
     chunk: m['chunk'] as int,
@@ -123,7 +123,7 @@ class SliceProof {
     if (chunkLength <= 0 || chunkLength > ChainParams.chunkBytes) return 'bad chunk length';
     if (slice != challengedSlice(challenge, partition, chunk, chunkLength)) return 'not the challenged slice';
     if (packed.length != ChainParams.sliceBytes) return 'a slice is 1 KB';
-    final seed = await packSeed(params, steward, partition, chunk);
+    final seed = await packSeed(params, keeper, partition, chunk);
     final plain = xorStream(packed, seed, slice * ChainParams.sliceBytes);
     final real = (chunkLength - slice * ChainParams.sliceBytes).clamp(0, ChainParams.sliceBytes);
     final slices = (chunkLength + ChainParams.sliceBytes - 1) ~/ ChainParams.sliceBytes;
@@ -137,13 +137,13 @@ class SliceProof {
   }
 }
 
-/// A steward's side: its packed partitions and the corpus they come from.
-class Steward {
-  Steward({required this.params, required this.key, required this.corpus, required this.folder, required this.files});
+/// A keeper's side: its packed partitions and the corpus they come from.
+class Keeper {
+  Keeper({required this.params, required this.key, required this.corpus, required this.folder, required this.files});
 
   final ChainParams params;
 
-  /// The steward's public key (hex).
+  /// The keeper's public key (hex).
   final String key;
   final Corpus corpus;
 
@@ -206,7 +206,7 @@ class Steward {
     final plain = await _plainChunk(partition, chunk);
     final leaves = sliceLeaves(plain);
     return SliceProof(
-      steward: key,
+      keeper: key,
       circle: circle,
       partition: partition,
       chunk: chunk,

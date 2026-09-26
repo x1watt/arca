@@ -4,7 +4,7 @@
 // SHA-256 of its canonical form. Holding proofs are the exception: they
 // carry nonce 0 and use none, since replaying one changes nothing (it
 // counts only on its own day, once), and a proof that missed its day must
-// not hold back the steward's later transactions.
+// not hold back the keeper's later transactions.
 
 import 'dart:convert';
 import 'dart:typed_data';

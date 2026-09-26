@@ -44,16 +44,16 @@ void main() {
     await tmp.delete(recursive: true);
   });
 
-  test('packing: round trip, unique per steward, and a slice proves up to the corpus root', () async {
+  test('packing: round trip, unique per keeper, and a slice proves up to the corpus root', () async {
     const p = ChainParams.testnet;
     final chunk = bytes(ChainParams.chunkBytes, 3);
     final seedA = await packSeed(p, 'a' * 64, 0, 0);
     final seedB = await packSeed(p, 'b' * 64, 0, 0);
     final packedA = xorStream(chunk, seedA, 0), packedB = xorStream(chunk, seedB, 0);
-    expect(packedA, isNot(equals(packedB)), reason: 'one disk cannot answer for two stewards');
+    expect(packedA, isNot(equals(packedB)), reason: 'one disk cannot answer for two keepers');
     expect(xorStream(packedA, seedA, 0), chunk);
 
-    // A proof: packed slice 7 of this chunk, unpacked with the steward's
+    // A proof: packed slice 7 of this chunk, unpacked with the keeper's
     // seed (recomputed by the verifier), checked against the chunk root,
     // then the chunk against the partition, the partition against the corpus.
     const slice = 7;
@@ -69,7 +69,7 @@ void main() {
     ];
     final partRoot = merkleRoot(other);
     expect(merkleVerify(cRoot, merkleProof(other, 0), partRoot), isTrue);
-    // The wrong steward's seed does not unpack it.
+    // The wrong keeper's seed does not unpack it.
     final wrong = xorStream(Uint8List.fromList(packedSlice), seedB, slice * 1024);
     expect(merkleVerify(leafHash(wrong), merkleProof(leaves, slice), cRoot), isFalse);
   });

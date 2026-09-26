@@ -77,7 +77,15 @@ class BlobService {
   int served = 0;
 
   /// Who may read how much; null serves everyone.
-  final ServingRules? rules;
+  ServingRules? rules;
+
+  /// While true, this device answers no requests (the owner's sharing
+  /// limits: only on Wi-Fi, only while charging); readers go elsewhere.
+  bool paused = false;
+
+  /// Upload bytes per second, 0 for no limit.
+  int uploadLimit = 0;
+  DateTime _nextSend = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// The latest receipt of each pass this server delivered under, to
   /// settle on the chain after the pass ends.
@@ -170,6 +178,12 @@ class BlobService {
   }
 
   void _requested(String from, String sha, int offset, int length) {
+    if (paused) {
+      final msg = Uint8List(33)..[0] = _miss;
+      msg.setRange(1, 33, fromHex(sha));
+      unawaited(link.send(from, msg, from: address));
+      return;
+    }
     final r = rules;
     if (r == null) {
       unawaited(_serve(from, sha, offset, length));
@@ -256,6 +270,13 @@ class BlobService {
         ..add(Uint8List.sublistView(head, 1))
         ..add(bytes);
       served += bytes.length;
+      if (uploadLimit > 0) {
+        // Pace chunks so the upload stays under the owner's limit.
+        final now = DateTime.now();
+        final start = _nextSend.isAfter(now) ? _nextSend : now;
+        _nextSend = start.add(Duration(microseconds: bytes.length * 1000000 ~/ uploadLimit));
+        if (start.isAfter(now)) await Future<void>.delayed(start.difference(now));
+      }
       await link.send(to, header.takeBytes(), from: address);
     } on FileSystemException {
       return;
@@ -294,7 +315,7 @@ class BlobService {
   /// Introduces [session] to [servers] and waits (a few seconds at most)
   /// for their welcomes, so the first requests already count as its own.
   Future<void> _introduce(ReaderSession session, List<String> servers) async {
-    final pending = servers.where((s) => !session.serverKeys.containsKey(s)).toSet();
+    final pending = servers.where((s) => !session.status.containsKey(s)).toSet();
     if (pending.isEmpty) return;
     final key = toHex(publicKeyOf(session.secretKey));
     final pass = session.pass ?? '';
@@ -317,6 +338,11 @@ class BlobService {
     }
     await done.future.timeout(const Duration(seconds: 3), onTimeout: () {});
     await sub.cancel();
+    // A server that did not answer has no rules: read from it as before,
+    // without waiting for it again.
+    for (final s in pending) {
+      session.status[s] = ReaderStatus.free;
+    }
   }
 
   /// Sends [session]'s signed running total for [server], when it has a

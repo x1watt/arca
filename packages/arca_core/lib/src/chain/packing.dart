@@ -1,7 +1,7 @@
-// Packing (whitepaper, section 7): each steward stores every chunk XOR a
+// Packing (whitepaper, section 7): each keeper stores every chunk XOR a
 // keystream that only its own key and the chunk's position produce, and
 // producing it costs a memory-hard function (Argon2id here; RandomX is a
-// later choice). One disk cannot answer for two stewards, and making the
+// later choice). One disk cannot answer for two keepers, and making the
 // bytes on demand costs far more than reading them.
 //
 // Keystream of a chunk = SHA-256(seed || counter) blocks, where seed =
@@ -20,9 +20,9 @@ import 'params.dart';
 final _salt = utf8.encode('arca-packing-v1!');
 
 /// The seed of the keystream for chunk [index] of [partition] packed by
-/// [stewardPubkey] (hex).
-Future<Uint8List> packSeed(ChainParams params, String stewardPubkey, int partition, int index) async {
-  final input = utf8.encode('$stewardPubkey:$partition:$index');
+/// [keeperPubkey] (hex).
+Future<Uint8List> packSeed(ChainParams params, String keeperPubkey, int partition, int index) async {
+  final input = utf8.encode('$keeperPubkey:$partition:$index');
   final key = await Argon2id(
     memory: params.packMemoryKiB,
     parallelism: 1,
@@ -51,7 +51,7 @@ Uint8List xorStream(Uint8List data, Uint8List seed, int offset) {
   return Uint8List.fromList([for (var i = 0; i < data.length; i++) data[i] ^ ks[i]]);
 }
 
-/// A steward's packed copy of one partition: fixed slots of one chunk each,
+/// A keeper's packed copy of one partition: fixed slots of one chunk each,
 /// short last chunks padded with zeros before packing.
 class PackedPartition {
   PackedPartition(this.path);

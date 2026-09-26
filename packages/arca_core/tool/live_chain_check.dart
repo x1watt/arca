@@ -1,4 +1,4 @@
-// The chain over the live I2P network: three stewards, each with its own
+// The chain over the live I2P network: three keepers, each with its own
 // I2P node, pack a partition each, declare it, mine and post holding
 // proofs for a few minute-long "days", then must agree on one chain.
 //
@@ -90,7 +90,7 @@ Future<void> main(List<String> args) async {
     keys.add(decodeEntity((await c.handle('exportNsec', {'id': id}))['nsec'] as String, 'nsec'));
   }
   say('network up: ${addresses.map((a) => a.substring(0, 8)).join(', ')}');
-  // Steward a administers the commons: its log lists one public
+  // Keeper a administers the commons: its log lists one public
   // collection per partition, and its node anchors it about hourly.
   final log = CircleLog('commons', admin: toHex(publicKeyOf(keys[0])));
   log.write(keys[0], LogType.appoint, {'key': toHex(publicKeyOf(keys[0]))});
@@ -114,7 +114,7 @@ Future<void> main(List<String> args) async {
   final nodes = <ChainNode>[];
   final logs = File('$dir/chain.log').openWrite();
   for (var i = 0; i < 3; i++) {
-    final steward = Steward(
+    final keeper = Keeper(
       params: live,
       key: toHex(publicKeyOf(keys[i])),
       corpus: corpus,
@@ -122,8 +122,8 @@ Future<void> main(List<String> args) async {
       files: files,
     );
     final sw = Stopwatch()..start();
-    await steward.pack(i);
-    say('steward ${'abc'[i]} packed partition $i in ${sw.elapsedMilliseconds} ms');
+    await keeper.pack(i);
+    say('keeper ${'abc'[i]} packed partition $i in ${sw.elapsedMilliseconds} ms');
     nodes.add(
       ChainNode(
           params: live,
@@ -131,7 +131,7 @@ Future<void> main(List<String> args) async {
           address: addresses[i],
           link: cores[i].net.backend.link,
           secretKey: keys[i],
-          steward: steward,
+          keeper: keeper,
           peers: addresses,
         )
         ..anchorBody = (i == 0 ? (_) => log.anchorBody() : null)
@@ -197,7 +197,7 @@ Future<void> main(List<String> args) async {
   );
   for (var i = 0; i < 3; i++) {
     say(
-      'steward ${'abc'[i]} declared: ${s.declarations[nodes[i].key] ?? 'dropped'}, '
+      'keeper ${'abc'[i]} declared: ${s.declarations[nodes[i].key] ?? 'dropped'}, '
       'last proof on day ${s.provenOn[nodes[i].key]?[i]}, standing ${(s.standing[nodes[i].key] ?? 0) / ChainParams.grainsPerMarca}',
     );
   }

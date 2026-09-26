@@ -598,7 +598,7 @@ class PartitionView {
   /// Whether a proof is due today (from the day after it was declared).
   final bool dueToday;
 
-  /// Stewards keeping it, this profile included.
+  /// Keepers keeping it, this profile included.
   final int copies;
 
   factory PartitionView.fromMap(Map m) => PartitionView(
@@ -630,6 +630,7 @@ class ChainView {
     required this.balance,
     required this.pending,
     required this.mining,
+    required this.paused,
     required this.standing,
     required this.syncScore,
     required this.corpusReady,
@@ -642,6 +643,11 @@ class ChainView {
     required this.pool,
     required this.isAdmin,
     required this.claimed,
+    required this.light,
+    required this.passPrice,
+    required this.freeAllowance,
+    required this.memberScore,
+    required this.passEndsAt,
   });
   final String invite;
   final String name;
@@ -660,6 +666,10 @@ class ChainView {
   final int balance;
   final int pending;
   final bool mining;
+
+  /// Why making blocks and preparing copies wait: 'charging', 'network',
+  /// or null.
+  final String? paused;
   final int standing;
   final int syncScore;
   final bool corpusReady;
@@ -673,10 +683,23 @@ class ChainView {
   final bool isAdmin;
   final int claimed;
 
+  /// This device follows the chain lightly (headers and proven reads) and
+  /// keeps no files.
+  final bool light;
+
+  /// How the circle is read: the price of a 24-hour pass (0: none sold),
+  /// the free bytes per reader per day, the sync score for free access,
+  /// and when this profile's pass ends (null: none).
+  final int passPrice;
+  final int freeAllowance;
+  final int memberScore;
+  final int? passEndsAt;
+
   static ChainView? fromMap(Map? m) {
     if (m == null) return null;
     final corpus = m['corpus'] as Map;
     final circle = m['circle'] as Map?;
+    final reading = m['reading'] as Map?;
     return ChainView(
       invite: m['invite'] as String,
       name: m['name'] as String,
@@ -690,6 +713,7 @@ class ChainView {
       balance: m['balance'] as int,
       pending: m['pending'] as int,
       mining: m['mining'] as bool,
+      paused: m['paused'] as String?,
       standing: m['standing'] as int,
       syncScore: m['syncScore'] as int,
       corpusReady: corpus['ready'] as bool,
@@ -705,8 +729,45 @@ class ChainView {
       pool: circle?['pool'] as int? ?? 0,
       isAdmin: circle?['admin'] as bool? ?? false,
       claimed: circle?['claimed'] as int? ?? 0,
+      light: m['light'] as bool? ?? false,
+      passPrice: reading?['passPrice'] as int? ?? 0,
+      freeAllowance: reading?['freeAllowance'] as int? ?? 0,
+      memberScore: reading?['memberScore'] as int? ?? 0,
+      passEndsAt: (reading?['myPass'] as Map?)?['endsAt'] as int?,
     );
   }
+}
+
+/// When this device shares with others and does the chain's heavy work.
+class SharingView {
+  const SharingView({
+    this.onlyUnmetered = true,
+    this.onlyCharging = true,
+    this.uploadLimit = 2 * 1024 * 1024,
+    this.freeShare = 20,
+    this.allowed = true,
+  });
+  final bool onlyUnmetered;
+  final bool onlyCharging;
+
+  /// Bytes per second.
+  final int uploadLimit;
+
+  /// Percent of a day's upload free readers may use.
+  final int freeShare;
+
+  /// Whether the limits allow sharing right now.
+  final bool allowed;
+
+  factory SharingView.fromMap(Map? m) => m == null
+      ? const SharingView()
+      : SharingView(
+          onlyUnmetered: m['onlyUnmetered'] as bool? ?? true,
+          onlyCharging: m['onlyCharging'] as bool? ?? true,
+          uploadLimit: m['uploadLimit'] as int? ?? 2 * 1024 * 1024,
+          freeShare: (m['freeShare'] as num?)?.toInt() ?? 20,
+          allowed: m['allowed'] as bool? ?? true,
+        );
 }
 
 /// "1,234.5 marcas" from grains, without trailing zeros.
@@ -742,6 +803,7 @@ class CoreState {
     this.chain,
     this.chainPending = false,
     this.chainError,
+    this.sharing = const SharingView(),
   });
   final List<ProfileView> profiles;
   final String? activeId;
@@ -766,6 +828,7 @@ class CoreState {
 
   /// Why the test network could not start on this device, if it could not.
   final String? chainError;
+  final SharingView sharing;
 
   List<ProposalView> proposalsFor(String collectionId) =>
       proposals.where((p) => p.collectionId == collectionId).toList();
@@ -911,6 +974,7 @@ class Core {
       chain: ChainView.fromMap(result['chain'] as Map?),
       chainPending: result['chainPending'] as bool? ?? false,
       chainError: result['chainError'] as String?,
+      sharing: SharingView.fromMap(result['sharing'] as Map?),
     );
   }
 
@@ -1157,7 +1221,37 @@ class Core {
   Future<String?> chainKeep(int partition, bool keep) =>
       _change('chainKeep', {'partition': partition, 'keep': keep});
   Future<String?> chainMining(bool on) => _change('chainMining', {'on': on});
+
+  /// When this device shares (Settings).
+  Future<String?> setSharing({
+    bool? onlyUnmetered,
+    bool? onlyCharging,
+    int? uploadLimit,
+    int? freeShare,
+  }) => _change('setSharing', {
+    'onlyUnmetered': ?onlyUnmetered,
+    'onlyCharging': ?onlyCharging,
+    'uploadLimit': ?uploadLimit,
+    'freeShare': ?freeShare,
+  });
+
+  /// The device's power and connection, from [PowerWatch].
+  Future<void> setPower({required bool charging, required bool unmetered}) =>
+      _call('chainPower', {'charging': charging, 'unmetered': unmetered});
   Future<String?> chainPayout() => _change('chainPayout');
+  Future<String?> chainLight(bool on) => _change('chainLight', {'on': on});
+  Future<String?> chainBuyPass() => _change('chainBuyPass');
+
+  /// The admin's reading settings; [passPrice] in marcas as typed.
+  Future<String?> chainReading({
+    String? passPrice,
+    int? freeAllowance,
+    int? memberScore,
+  }) => _change('chainReading', {
+    'passPrice': ?passPrice,
+    'freeAllowance': ?freeAllowance,
+    'memberScore': ?memberScore,
+  });
   Future<String?> chainClaim() => _change('chainClaim');
 
   /// SHA-256 and SHA-1 of a file on disk, computed on the core isolate.

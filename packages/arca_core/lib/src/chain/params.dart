@@ -80,7 +80,7 @@ class ChainParams {
   /// Copies of a partition or collection the reward curve aims for.
   static const targetCopies = 10;
 
-  /// Share of a steward's standing that passes on to what they keep from
+  /// Share of a keeper's standing that passes on to what they keep from
   /// other circles.
   static const standingPassOn = 3; // one third
 

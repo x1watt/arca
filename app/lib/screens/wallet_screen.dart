@@ -82,6 +82,23 @@ class _NotOnChain extends StatefulWidget {
 class _NotOnChainState extends State<_NotOnChain> {
   bool _busy = false;
 
+  /// Why the last start or join failed; stays on screen until the next try.
+  String? _error;
+
+  Future<void> _do(Future<String?> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final error = await action();
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _error = error;
+      });
+    }
+  }
+
   Future<void> _start() async {
     final collections = widget.state.collections
         .where((c) => c.files.isNotEmpty)
@@ -113,9 +130,7 @@ class _NotOnChainState extends State<_NotOnChain> {
       ),
     );
     if (picked == null || !mounted) return;
-    setState(() => _busy = true);
-    await _run(context, Core.instance.chainStart(picked));
-    if (mounted) setState(() => _busy = false);
+    await _do(() => Core.instance.chainStart(picked));
   }
 
   Future<void> _join() async {
@@ -126,20 +141,21 @@ class _NotOnChainState extends State<_NotOnChain> {
       hint: 'arca-chain:...',
     );
     if (invite == null || invite.isEmpty || !mounted) return;
-    setState(() => _busy = true);
-    await _run(context, Core.instance.chainJoin(invite));
-    if (mounted) setState(() => _busy = false);
+    await _do(() => Core.instance.chainJoin(invite));
   }
 
   @override
   Widget build(BuildContext context) {
     return EmptyState(
       icon: Icons.toll_outlined,
-      title: 'Marcas are earned by keeping files',
-      text:
-          'Keep a copy of a circle\'s files and prove it every day, and the chain pays your circle in marcas. '
-          'This is a test network: its marcas have no value. Start one from one of your collections, '
-          'or join one with an invite from someone who started it.',
+      title: _error != null
+          ? 'That did not work'
+          : 'Marcas are earned by keeping files',
+      text: _error != null
+          ? _error!
+          : 'Keep a copy of a circle\'s files and prove it every day, and the chain pays your circle in marcas. '
+                'This is a test network: its marcas have no value. Start one from one of your collections, '
+                'or join one with an invite from someone who started it.',
       action: _busy
           ? const Column(
               children: [
@@ -327,6 +343,17 @@ class _DayLineState extends State<_DayLine> {
     final left = ((c.nextDayAt - DateTime.now().millisecondsSinceEpoch) ~/ 1000)
         .clamp(0, c.dayLength);
     final clock = '${left ~/ 60}:${(left % 60).toString().padLeft(2, '0')}';
+    final net = Core.instance.state.value?.net;
+    if (net != null && net != NetStatus.up) {
+      return Text(
+        net == NetStatus.failed
+            ? 'I2P is not connected, so this device neither hears nor reaches the network (Settings, Network).'
+            : 'Connecting to I2P...',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.error,
+        ),
+      );
+    }
     final text = c.behind
         ? 'Catching up with the chain: block ${c.height}, ${plural(c.peers, 'peer')}.'
         : 'Day ${c.day}, the next starts in $clock. Block ${c.height}, ${plural(c.peers, 'peer')}.';
@@ -361,6 +388,33 @@ class _Keeping extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
+    if (chain.light) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.phone_android_outlined),
+            title: const Text('Following the chain lightly'),
+            subtitle: Text(
+              'This device checks block headers and reads what it needs with proofs. '
+              'It keeps no files, so it earns nothing, and it is easy on the battery.',
+              style: muted,
+            ),
+          ),
+          SwitchListTile(
+            secondary: const Icon(Icons.inventory_2_outlined),
+            title: const Text('Keep files on this device'),
+            subtitle: Text(
+              'Copies the circle\'s files, proves them every day and earns for the circle. '
+              'Uses disk space and, while making blocks, some battery.',
+              style: muted,
+            ),
+            value: false,
+            onChanged: (v) => _run(context, Core.instance.chainLight(!v)),
+          ),
+        ],
+      );
+    }
     if (!chain.corpusReady) {
       final text =
           chain.corpusError ??
@@ -414,13 +468,27 @@ class _Keeping extends StatelessWidget {
         SwitchListTile(
           secondary: const Icon(Icons.bolt_outlined),
           title: const Text('Take part in making blocks'),
-          subtitle: Text(
-            'Uses a little disk and processor time each second while Arca is open.',
-            style: muted,
-          ),
+          subtitle: Text(switch (chain.paused) {
+            'charging' when chain.mining => 'Waiting until the device charges (Settings, Sharing). Daily proofs still go out.',
+            'network' when chain.mining => 'Waiting for Wi-Fi or a cable (Settings, Sharing). Daily proofs still go out.',
+            _ =>
+              'Uses a little disk and processor time each second while Arca is open, '
+                  'within the sharing limits in Settings.',
+          }, style: muted),
           value: chain.mining,
           onChanged: (v) => _run(context, Core.instance.chainMining(v)),
         ),
+        if (!chain.founder)
+          SwitchListTile(
+            secondary: const Icon(Icons.inventory_2_outlined),
+            title: const Text('Keep files on this device'),
+            subtitle: Text(
+              'Off: follow the chain lightly, keeping nothing (for phones).',
+              style: muted,
+            ),
+            value: true,
+            onChanged: (v) => _run(context, Core.instance.chainLight(!v)),
+          ),
         ListTile(
           leading: const Icon(Icons.insights_outlined),
           title: Text(
@@ -455,9 +523,9 @@ class _Circle extends StatelessWidget {
           title: Text('Pool: ${formatMarcas(chain.pool)}'),
           subtitle: Text(
             chain.isAdmin
-                ? 'What the circle\'s stewards earned. As admin you pay it out: 45% to stewards by sync score, '
+                ? 'What the circle\'s keepers earned. As admin you pay it out: 45% to keepers by sync score, '
                       '45% to the collection\'s contributor, 10% to the admin and moderators.'
-                : 'What the circle\'s stewards earned, waiting for the admin to pay it out. '
+                : 'What the circle\'s keepers earned, waiting for the admin to pay it out. '
                       'You have claimed ${formatMarcas(chain.claimed)} so far.',
             style: muted,
           ),
@@ -485,6 +553,49 @@ class _Circle extends StatelessWidget {
                 ),
                 child: const Text('Claim my share'),
               ),
+            ],
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.menu_book_outlined),
+          title: Text(
+            'Reading: free up to ${formatBytes(chain.freeAllowance)} a day',
+          ),
+          subtitle: Text(
+            [
+              chain.passPrice > 0
+                  ? 'A 24-hour pass for more costs ${formatMarcas(chain.passPrice)}: half is burned, half goes to whoever serves the files.'
+                  : 'No passes are sold.',
+              if (chain.memberScore > 0)
+                'Members with a sync score of ${chain.memberScore} or more read freely.'
+              else
+                'Members who keep the circle\'s files read freely.',
+              if (chain.passEndsAt != null)
+                'Your pass runs until ${_time(chain.passEndsAt!)}.',
+            ].join(' '),
+            style: muted,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (chain.passPrice > 0 && chain.passEndsAt == null)
+                OutlinedButton(
+                  onPressed: () => _run(
+                    context,
+                    Core.instance.chainBuyPass(),
+                    'Pass bought. It starts with the next block.',
+                  ),
+                  child: const Text('Buy a pass'),
+                ),
+              if (chain.isAdmin)
+                OutlinedButton(
+                  onPressed: () => _readingSettings(context, chain),
+                  child: const Text('Reading settings'),
+                ),
             ],
           ),
         ),
@@ -549,6 +660,120 @@ class _SendDialogState extends State<_SendDialog> {
         onPressed: () =>
             Navigator.pop(context, (_to.text.trim(), _amount.text.trim())),
         child: const Text('Send'),
+      ),
+    ],
+  );
+}
+
+String _time(int millis) {
+  final t = DateTime.fromMillisecondsSinceEpoch(millis);
+  return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+}
+
+Future<void> _readingSettings(BuildContext context, ChainView chain) async {
+  final r = await showDialog<(String, String, String)>(
+    context: context,
+    builder: (_) => _ReadingDialog(chain: chain),
+  );
+  if (r == null || !context.mounted) return;
+  final megabytes = int.tryParse(r.$2);
+  final score = int.tryParse(r.$3);
+  if (megabytes == null || score == null) {
+    showMessage(
+      context,
+      'Enter whole numbers for the allowance and the score.',
+    );
+    return;
+  }
+  await _run(
+    context,
+    Core.instance.chainReading(
+      passPrice: r.$1,
+      freeAllowance: megabytes * 1024 * 1024,
+      memberScore: score,
+    ),
+    'Saved. The circle\'s next anchor puts it on the chain.',
+  );
+}
+
+class _ReadingDialog extends StatefulWidget {
+  const _ReadingDialog({required this.chain});
+  final ChainView chain;
+
+  @override
+  State<_ReadingDialog> createState() => _ReadingDialogState();
+}
+
+class _ReadingDialogState extends State<_ReadingDialog> {
+  late final _price = TextEditingController(
+    text: formatMarcas(widget.chain.passPrice)
+        .replaceFirst(' marcas', '')
+        .replaceAll(',', ''),
+  );
+  late final _allowance = TextEditingController(
+    text: '${widget.chain.freeAllowance ~/ (1024 * 1024)}',
+  );
+  late final _score = TextEditingController(
+    text: '${widget.chain.memberScore}',
+  );
+
+  @override
+  void dispose() {
+    _price.dispose();
+    _allowance.dispose();
+    _score.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('How the circle is read'),
+    scrollable: true,
+    content: SizedBox(
+      width: 420,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _price,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(
+              labelText: 'Price of a 24-hour pass, in marcas',
+              helperText: '0 sells no passes',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _allowance,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Free reading per person per day, in MB',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _score,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Sync score for free member access',
+              helperText: '0: every member who keeps files',
+            ),
+          ),
+        ],
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        onPressed: () => Navigator.pop(context, (
+          _price.text.trim(),
+          _allowance.text.trim(),
+          _score.text.trim(),
+        )),
+        child: const Text('Save'),
       ),
     ],
   );

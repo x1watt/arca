@@ -37,7 +37,7 @@ void main() {
       expect(log.policy.approvals, 2);
       expect(
         () => log.write(admin, LogType.policy, {
-          'payoutShares': {'stewards': 90},
+          'payoutShares': {'keepers': 90},
         }),
         throwsRule('add up to 100'),
       );
@@ -238,9 +238,9 @@ void main() {
     );
     s.circles['radio']!.pool = 1000 * m;
     // The admin's software splits the pool's 1,000 marcas by the policy:
-    // 45% stewards, 45% contributors, 10% moderators.
+    // 45% keepers, 45% contributors, 10% moderators.
     final totals = distribute(1000 * m, log.policy.payoutShares, {
-      'stewards': {pk(alice): 3, pk(bob): 1},
+      'keepers': {pk(alice): 3, pk(bob): 1},
       'contributors': {pk(bob): 1},
       'moderators': {pk(mods[0]): 1},
     }, const {});
@@ -263,7 +263,7 @@ void main() {
     // The pool earns more; the table grows; alice claims only the new part.
     s.circles['radio']!.pool += 400 * m;
     final more = distribute(400 * m, log.policy.payoutShares, {
-      'stewards': {pk(alice): 1},
+      'keepers': {pk(alice): 1},
     }, log.payouts);
     log.write(admin, LogType.payout, {'table': more});
     expect(() => log.write(admin, LogType.payout, {'table': totals}), throwsRule('only grow'));

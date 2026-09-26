@@ -133,7 +133,7 @@ void main() {
   }, timeout: const Timeout(Duration(minutes: 1)));
 
   test('a fraud proof for a day\'s settlement travels in parts and still holds', () async {
-    // Many stewards make the settlement's namespaces big.
+    // Many keepers make the settlement's namespaces big.
     final rng = Random(7);
     final genesis = ChainState.genesis(
       p,
@@ -143,7 +143,7 @@ void main() {
       final k = toHex(List.generate(32, (_) => rng.nextInt(256)));
       genesis.declarations[k] = {0: 'commons'};
       genesis.declaredOn[k] = {0: 0};
-      genesis.stewards++;
+      genesis.keepers++;
     }
     final producer = generateSecretKey();
     final honest = await Block.produce(genesis, producer, const [], tick: p.dayTicks + 1);
@@ -171,6 +171,6 @@ void main() {
       whole = r.add(Inbound('x', 'y', encodeChainMessage(part))) ?? whole;
     }
     await FraudProof((whole!['f'] as Map).cast<String, Object?>()).verify(p, genesisRoot: genesis.rootHex);
-    print('settlement fraud proof with 400 stewards: ${parts.length} parts');
+    print('settlement fraud proof with 400 keepers: ${parts.length} parts');
   });
 }

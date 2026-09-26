@@ -49,7 +49,7 @@ class CirclePolicy {
     this.approvals = 1,
     this.disconnectAfterTicks = 6 * 3600,
     this.disconnectedFree = true,
-    this.payoutShares = const {'stewards': 45, 'contributors': 45, 'moderators': 10},
+    this.payoutShares = const {'keepers': 45, 'contributors': 45, 'moderators': 10},
     this.passPrice = 0,
     this.freeAllowance = 1 << 30,
     this.memberScore = 0,
@@ -73,7 +73,7 @@ class CirclePolicy {
   final int disconnectAfterTicks;
   final bool disconnectedFree;
 
-  /// The pool's payout policy: percent to stewards (by sync score), to
+  /// The pool's payout policy: percent to keepers (by sync score), to
   /// contributors (by how much their accepted files are kept and read) and
   /// to moderators and indexers.
   final Map<String, int> payoutShares;

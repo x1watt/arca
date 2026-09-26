@@ -28,6 +28,7 @@ import '../profiles/profile_store.dart';
 import '../profiles/vault.dart';
 import '../relay/event_store.dart';
 import '../transport/link.dart' show Inbound;
+import '../transport/reading.dart';
 import 'network.dart';
 import 'social.dart';
 
@@ -105,6 +106,41 @@ class CoreService {
   final _chainHas = <String>{};
   final _chainErrors = <String, String>{};
 
+  /// Reading sessions per profile, and profiles settling passes now.
+  final _readers = <String, ReaderSession>{};
+  final _settling = <String>{};
+
+  /// The device's power and connection, as the UI last reported them.
+  Map<String, Object?> _power = const {'charging': true, 'unmetered': true};
+
+  /// When this device shares (Settings): only on Wi-Fi or a cable, only
+  /// while charging, the upload limit in bytes per second, and the percent
+  /// of a day's upload free readers may use.
+  var _sharing = <String, Object?>{
+    'onlyUnmetered': true,
+    'onlyCharging': true,
+    'uploadLimit': 2 * 1024 * 1024,
+    'freeShare': 20,
+  };
+
+  /// Whether the sharing limits allow serving and heavy chain work now.
+  bool get _sharingAllowed =>
+      (_sharing['onlyCharging'] != true || _power['charging'] != false) &&
+      (_sharing['onlyUnmetered'] != true || _power['unmetered'] != false);
+
+  /// Applies the sharing limits to every profile's file service and to the
+  /// chain.
+  void _applySharing() {
+    for (final id in net.onlineIds) {
+      final blobs = net.blobsOf(id);
+      if (blobs == null) continue;
+      blobs
+        ..paused = !_sharingAllowed
+        ..uploadLimit = _sharing['uploadLimit'] as int;
+      _applyServing(id);
+    }
+  }
+
   final _foldAgain = <String>{};
   String? _subtitleSha;
   String _subtitleName = '';
@@ -156,6 +192,7 @@ class CoreService {
       backend ?? I2pBackend('$dataDir/i2p'),
       onChange: () async {
         s._background(s._chainResumeAll());
+        s._applySharing();
         s.onPush?.call(await s._state());
       },
       onEvent: (profileId, e) {
@@ -185,6 +222,7 @@ class CoreService {
       _defaultFolder = m['defaultFolder'] as String;
       _whisperModel = m['whisperModel'] as String?;
       _autoSubtitles = m['autoSubtitles'] as bool? ?? true;
+      if (m['sharing'] case final Map sharing) _sharing = {..._sharing, ...sharing.cast<String, Object?>()};
     }
     if (_baseFolders.isEmpty) {
       _baseFolders = [_defaultBase];
@@ -199,6 +237,7 @@ class CoreService {
       'defaultFolder': _defaultFolder,
       'whisperModel': _whisperModel,
       'autoSubtitles': _autoSubtitles,
+      'sharing': _sharing,
     }),
   );
 
@@ -749,6 +788,7 @@ class CoreService {
         },
     ],
     'net': {'state': net.state.name, 'error': net.error},
+    'sharing': {..._sharing, 'allowed': _sharingAllowed},
   };
 
   /// Handles one request; returns the new state, a result, or an error.
@@ -1118,6 +1158,13 @@ class CoreService {
           } else {
             _transcriber.cancel();
           }
+        case 'setSharing':
+          for (final k in ['onlyUnmetered', 'onlyCharging', 'uploadLimit', 'freeShare']) {
+            if (args.containsKey(k)) _sharing[k] = args[k];
+          }
+          await _saveSettings();
+          _applySharing();
+          if (_chainPort != null) await _chainCmd('power', {..._power, ..._sharing});
         case 'hashFile':
           final (sha256, sha1, size) = await hashFile(File(args['path'] as String));
           return {'sha256': sha256, 'sha1': sha1, 'size': size};
