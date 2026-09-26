@@ -134,10 +134,10 @@ gboolean texture_gl_populate_texture(FlTextureGL* texture,
   
   // Arca: set up mpv's GL rendering here, where Flutter's EGL context is
   // current. Until it works, the 1x1 placeholder below is shown.
-  gboolean gl_ready = video_output_ensure_gl(video_output);
+  gboolean gl_ready = video_output != NULL && video_output_ensure_gl(video_output);
   
-  gint32 required_width = (guint32)video_output_get_width(video_output);
-  gint32 required_height = (guint32)video_output_get_height(video_output);
+  gint32 required_width = gl_ready ? (guint32)video_output_get_width(video_output) : 0;
+  gint32 required_height = gl_ready ? (guint32)video_output_get_height(video_output) : 0;
   
   if (gl_ready && required_width > 0 && required_height > 0) {
     gboolean first_frame = self->name == 0 || self->fbo == 0 || self->mpv_texture == 0;

@@ -13,9 +13,14 @@ import '../nostr/event.dart';
 /// (`p`) and the suggestion it accepts (`e`), if any.
 const kindCollectionChange = 4782;
 
-/// How many applied change ids the head keeps, so followers know what is
-/// already folded into it.
-const maxAppliedIds = 500;
+/// How many applied change ids the head names; older changes are covered
+/// by its `folded` watermark instead, so the head stays one message.
+const maxAppliedIds = 150;
+
+/// Bytes of file list per event: the head's own list when it fits under
+/// [maxHeadListBytes], otherwise pages of about this size.
+const maxHeadListBytes = 12000;
+const pageBytes = 20000;
 
 class IndexFile {
   IndexFile({
@@ -80,6 +85,7 @@ class CollectionIndex {
     Map<String, IndexFile>? files,
     Set<String>? applied,
     this.headAt = 0,
+    this.foldedBefore = 0,
     this.complete = true,
   }) : moderators = moderators ?? [],
        files = files ?? {},
@@ -98,6 +104,10 @@ class CollectionIndex {
   final Set<String> applied;
   final int headAt;
 
+  /// Changes older than this are already part of the head, or were never
+  /// folded in and are ignored.
+  final int foldedBefore;
+
   /// False when the head was too big to list its files.
   final bool complete;
 
@@ -108,8 +118,10 @@ class CollectionIndex {
   /// Whether [pubkey] may change this collection.
   bool mayChange(String pubkey) => pubkey == admin || isModerator(pubkey);
 
-  /// Reads the admin's head event; null when it is not a collection head.
-  static CollectionIndex? fromHead(NostrEvent head) {
+  /// Reads the admin's head event and, for a large collection, the pages it
+  /// names ([pages] by event id; others are ignored). Null when [head] is
+  /// not a collection head. Missing pages leave the index incomplete.
+  static CollectionIndex? fromHead(NostrEvent head, {Map<String, NostrEvent> pages = const {}}) {
     if (head.kind != Kind.arcaCollection) return null;
     final Map m;
     try {
@@ -123,7 +135,8 @@ class CollectionIndex {
       name: m['name'] as String? ?? '',
       description: m['description'] as String? ?? '',
       headAt: head.createdAt,
-      complete: m['files'] is List,
+      foldedBefore: int.tryParse(head.tagValues('folded').firstOrNull ?? '') ?? 0,
+      complete: m['files'] is List || _pagesComplete(head, pages),
       moderators: [
         for (final t in head.tags)
           if (t.length >= 3 && t[0] == 'role' && t[2] == 'moderator') Moderator(t[1], t.length > 3 ? t[3] : ''),
@@ -137,7 +150,47 @@ class CollectionIndex {
       final file = IndexFile.fromJson(f as Map);
       index.files[file.path] = file;
     }
+    for (final id in pageIds(head)) {
+      final page = pages[id];
+      if (page == null || page.pubkey != head.pubkey || page.kind != Kind.arcaCollectionPage) continue;
+      try {
+        for (final f in (jsonDecode(page.content) as Map)['files'] as List) {
+          final file = IndexFile.fromJson(f as Map);
+          index.files[file.path] = file;
+        }
+      } catch (_) {}
+    }
     return index;
+  }
+
+  /// Event ids of the pages [head] is made of, in order.
+  static List<String> pageIds(NostrEvent head) => [
+    for (final t in head.tags)
+      if (t.length >= 3 && t[0] == 'page') t[2],
+  ];
+
+  static bool _pagesComplete(NostrEvent head, Map<String, NostrEvent> pages) {
+    final ids = pageIds(head);
+    return ids.isNotEmpty && ids.every(pages.containsKey);
+  }
+
+  /// Splits a file list into page contents of about [pageBytes] each.
+  static List<String> paginate(List<Map<String, Object?>> files) {
+    final pages = <String>[];
+    var current = <Map<String, Object?>>[];
+    var size = 0;
+    for (final f in files) {
+      final n = utf8.encode(jsonEncode(f)).length + 1;
+      if (current.isNotEmpty && size + n > pageBytes) {
+        pages.add(jsonEncode({'files': current}));
+        current = [];
+        size = 0;
+      }
+      current.add(f);
+      size += n;
+    }
+    if (current.isNotEmpty) pages.add(jsonEncode({'files': current}));
+    return pages;
   }
 
   /// The operations in a change event; empty when it is not one.
@@ -158,7 +211,9 @@ class CollectionIndex {
   /// admin or a moderator, and are not folded in yet, oldest first.
   /// Returns the ids of the changes applied.
   List<String> fold(Iterable<NostrEvent> changes) {
-    final todo = changes.where((c) => concerns(c) && !applied.contains(c.id) && mayChange(c.pubkey)).toList()
+    final todo = changes
+        .where((c) => concerns(c) && !applied.contains(c.id) && c.createdAt >= foldedBefore && mayChange(c.pubkey))
+        .toList()
       ..sort((a, b) => a.createdAt != b.createdAt ? a.createdAt.compareTo(b.createdAt) : a.id.compareTo(b.id));
     final done = <String>[];
     for (final c in todo) {

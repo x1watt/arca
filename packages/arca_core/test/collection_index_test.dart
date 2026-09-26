@@ -97,4 +97,66 @@ void main() {
     expect(removed.fold([c]), isEmpty);
     expect(removed.files['a.txt']!.title, 'A');
   });
+
+  test('a large list reads from the pages the head names, and only those', () {
+    final files = [
+      for (var i = 0; i < 400; i++)
+        {'path': 'f$i.txt', 'sha256': 'h$i', 'size': i, 'mime': 'text/plain', 'title': 'File number $i with a longer title'},
+    ];
+    final contents = CollectionIndex.paginate(files);
+    expect(contents.length, greaterThan(1));
+    final pages = [
+      for (var n = 0; n < contents.length; n++)
+        NostrEvent.sign(secretKey: admin, kind: Kind.arcaCollectionPage, content: contents[n], tags: [
+          ['d', 'c1/$n'],
+        ]),
+    ];
+    final h = NostrEvent.sign(
+      secretKey: admin,
+      kind: Kind.arcaCollection,
+      content: jsonEncode({'name': 'Big', 'fileCount': 400}),
+      tags: [
+        ['d', 'c1'],
+        for (var n = 0; n < pages.length; n++) ['page', 'c1/$n', pages[n].id],
+      ],
+    );
+    final full = CollectionIndex.fromHead(h, pages: {for (final p in pages) p.id: p})!;
+    expect(full.complete, isTrue);
+    expect(full.files.length, 400);
+    final partial = CollectionIndex.fromHead(h, pages: {pages.first.id: pages.first})!;
+    expect(partial.complete, isFalse);
+    // A page signed by someone else under the same id is not used.
+    final fake = NostrEvent.sign(secretKey: outsider, kind: Kind.arcaCollectionPage, content: contents[0], tags: [
+      ['d', 'c1/0'],
+    ]);
+    expect(CollectionIndex.fromHead(h, pages: {pages[0].id: fake})!.files, isEmpty);
+  });
+
+  test('changes older than the watermark are left out', () {
+    final h = NostrEvent.sign(
+      secretKey: admin,
+      kind: Kind.arcaCollection,
+      createdAt: 300,
+      content: jsonEncode({
+        'name': 'Clips',
+        'files': [
+          {'path': 'a.txt', 'sha256': 'aa', 'size': 1, 'mime': 'text/plain', 'title': 'A'},
+        ],
+      }),
+      tags: [
+        ['d', 'c1'],
+        ['role', pk(mod), 'moderator', ''],
+        ['folded', '200'],
+      ],
+    );
+    final i = CollectionIndex.fromHead(h)!;
+    final old = change(mod, [
+      {'op': 'edit', 'path': 'a.txt', 'sha256': 'aa', 'title': 'Old'},
+    ], 150);
+    final recent = change(mod, [
+      {'op': 'edit', 'path': 'a.txt', 'sha256': 'aa', 'title': 'Recent'},
+    ], 250);
+    expect(i.fold([old, recent]), [recent.id]);
+    expect(i.files['a.txt']!.title, 'Recent');
+  });
 }

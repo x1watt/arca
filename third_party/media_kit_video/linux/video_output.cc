@@ -405,8 +405,13 @@ gint64 video_output_get_width(VideoOutput* self) {
   gint64 width = 0;
   gint64 height = 0;
 
+  // Arca: the node is only filled in when the call succeeds (no video yet
+  // otherwise); reading it uninitialized crashed the raster thread.
   mpv_node params;
-  mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params);
+  params.format = MPV_FORMAT_NONE;
+  if (mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params) < 0) {
+    params.format = MPV_FORMAT_NONE;
+  }
 
   int64_t dw = 0, dh = 0, rotate = 0;
   if (params.format == MPV_FORMAT_NODE_MAP) {
@@ -455,8 +460,13 @@ gint64 video_output_get_height(VideoOutput* self) {
   gint64 width = 0;
   gint64 height = 0;
 
+  // Arca: the node is only filled in when the call succeeds (no video yet
+  // otherwise); reading it uninitialized crashed the raster thread.
   mpv_node params;
-  mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params);
+  params.format = MPV_FORMAT_NONE;
+  if (mpv_get_property(self->handle, "video-out-params", MPV_FORMAT_NODE, &params) < 0) {
+    params.format = MPV_FORMAT_NONE;
+  }
 
   int64_t dw = 0, dh = 0, rotate = 0;
   if (params.format == MPV_FORMAT_NODE_MAP) {

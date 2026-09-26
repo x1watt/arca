@@ -138,6 +138,12 @@ Fix (`app/lib/core/playback.dart`): one player for the whole session, created af
 >
 > **Rule: create long-lived media objects once.** A player, its isolate and its GPU output cost the same whether one video is watched or fifty; pay once, at start, off the tap.
 
+### 3.13 A crash that waited for a new caller
+
+Alice's app died without a word during a two-instance test; the kernel log had it: a segfault on Flutter's raster thread in `libmedia_kit_video_plugin.so`, in `video_output_get_width`. That function reads an `mpv_node` that `mpv_get_property` fills in only when it succeeds, and reads it uninitialized when there is no video yet. Upstream it was rarely reached before a video existed; the lazy GPU setup (3.10) asks for the size on every frame request of the idle player, so garbage was read often enough to crash. Fixed in the patched plugin: the node is initialized and the result checked, and the size is only asked for once the GPU output exists.
+
+> **Rule: a silent exit is a crash until the kernel log says otherwise.** `journalctl -k | grep segfault` names the library and the offset; `readelf -lW` and `nm` turn the offset into a function.
+
 ---
 
 ## 4. The heavy jobs and how they are run
@@ -158,7 +164,7 @@ whisper uses half of the processors on a computer (between 2 and 8) and at most 
 - Model downloads stream to a `.part` file while hashing; an interrupted download continues from where it stopped (HTTP range), rehashing only the bytes already on disk, and is renamed into place only when size and SHA-256 match.
 - Sidecar manifests are written to a temporary file and renamed, so a copy of the folder taken at any moment never holds half of one.
 
-- Files between clients (`transport/blobs.dart`) are served one 24 KiB chunk at a time from the file on disk and written by offset into a `.part` file; eight chunks are in flight, and a `.part.have` bitmap lets a download continue after a break instead of starting over. Over the live I2P network, three instances on this machine copied 115 KB in 1.1 s (about 100 KB/s).
+- Files between clients (`transport/blobs.dart`) are served one 24 KiB chunk at a time from the file on disk and written by offset into a `.part` file; eight chunks are in flight, and a `.part.have` bitmap lets a download continue after a break instead of starting over. Over the live I2P network, three instances on this machine copied 115 KB in 1.1 s, and a 22.9 MB video in 128 s (about 178 KB/s).
 - Stores written from several places at once (`follows.json`, `synced.json`, `collections.json`) save one at a time: two writers sharing the temporary file made the second rename fail.
 
 The one exception is whisper itself, which needs the whole decoded audio in memory (section 2 and 7).

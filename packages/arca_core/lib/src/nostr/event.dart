@@ -26,6 +26,10 @@ abstract final class Kind {
   /// Arca collection head (provisional number until the protocol is fixed):
   /// an addressable event keyed by the collection id.
   static const arcaCollection = 30780;
+
+  /// A page of a collection's file list when it does not fit in the head
+  /// (provisional): addressable, `d` = `<collection id>/<page number>`.
+  static const arcaCollectionPage = 30781;
 }
 
 class NostrEvent {

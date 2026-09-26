@@ -26,11 +26,10 @@ class ReviewScreen extends StatelessWidget {
         final pending =
             state?.proposalsFor(collectionId) ?? const <ProposalView>[];
         // Moderating someone else's collection: its files as followed.
-        final remote = pending.isEmpty || col != null
+        final remote = col != null
             ? null
-            : state
-                  ?.follow(pending.first.owner)
-                  ?.collections
+            : state?.following
+                  .expand((f) => f.collections)
                   .where((c) => c.id == collectionId)
                   .firstOrNull;
         CurrentFile? current(String path) {

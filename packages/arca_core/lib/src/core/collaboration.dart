@@ -90,7 +90,7 @@ extension _Collaboration on CoreService {
               changes
                   .where(
                     (c) =>
-                        c.tagValues('a').contains(address) && !col.applied.contains(c.id) && col.isModerator(c.pubkey),
+                        c.tagValues('a').contains(address) && !col.hasApplied(c.id) && col.isModerator(c.pubkey),
                   )
                   .toList()
                 ..sort(
@@ -100,7 +100,7 @@ extension _Collaboration on CoreService {
           for (final c in todo) {
             // In order: a change waits while its file cannot be fetched yet.
             if (!await _applyToLibrary(profileId, lib, col, c)) break;
-            await lib.markApplied(col.id, c.id);
+            await lib.markApplied(col.id, c.id, c.createdAt);
             changed = true;
           }
           if (changed) await _publishCollection(col, profileId);
@@ -214,7 +214,7 @@ extension _Collaboration on CoreService {
       await _deliverOutbox(profileId, f);
       final me = _pubkeyOf(profileId);
       final events = await node.query(f.address, [
-        NostrFilter(authors: [f.pubkey], kinds: const [Kind.profile, Kind.arcaCollection]),
+        NostrFilter(authors: [f.pubkey], kinds: const [Kind.profile, Kind.arcaCollection, Kind.arcaCollectionPage]),
         NostrFilter(
           kinds: const [kindCollectionChange],
           tags: {
@@ -228,13 +228,17 @@ extension _Collaboration on CoreService {
       }
       final indexes = <String, CollectionIndex>{};
       final changes = <String, NostrEvent>{};
+      final pages = {
+        for (final e in events)
+          if (e.kind == Kind.arcaCollectionPage && e.pubkey == f.pubkey) e.id: e,
+      };
       for (final e in events) {
         if (e.kind == Kind.profile && e.pubkey == f.pubkey) {
           try {
             f.name = (jsonDecode(e.content) as Map)['name'] as String? ?? f.name;
           } catch (_) {}
         } else if (e.kind == Kind.arcaCollection && e.pubkey == f.pubkey) {
-          final i = CollectionIndex.fromHead(e);
+          final i = CollectionIndex.fromHead(e, pages: pages);
           if (i != null) indexes[i.id] = i;
         } else if (e.kind == kindCollectionChange) {
           changes[e.id] = e;
@@ -325,7 +329,7 @@ extension _Collaboration on CoreService {
       await (await _followStore(profileId)).save();
       _push();
     }
-    unawaited(_syncFollowed(profileId, f));
+    _background(_syncFollowed(profileId, f));
   }
 
   // ---- Keeping a copy ----
@@ -333,7 +337,7 @@ extension _Collaboration on CoreService {
   Future<void> _syncFollowed(String profileId, Follow f) async {
     final store = await _syncStore(profileId);
     for (final s in store.items.where((s) => s.owner == f.pubkey)) {
-      unawaited(_syncOne(profileId, f, s));
+      _background(_syncOne(profileId, f, s));
     }
   }
 
@@ -382,8 +386,19 @@ extension _Collaboration on CoreService {
       ..bytes = 0;
     _push();
     final store = await _syncStore(profileId);
+    // Each push rebuilds the whole state for the UI, and each save rewrites
+    // the whole record: both at most twice a second, not once per file.
+    var lastReport = DateTime.now();
+    Future<void> report() async {
+      if (DateTime.now().difference(lastReport) < const Duration(milliseconds: 500)) return;
+      lastReport = DateTime.now();
+      await store.save();
+      _push();
+    }
+
     try {
       for (final file in files) {
+        if (_closing) break;
         if (!_safeRel(file.path)) continue;
         final target = '${s.folder}/${file.path}';
         final base = s.bytes;
@@ -429,8 +444,7 @@ extension _Collaboration on CoreService {
         });
         s.done++;
         s.bytes = base + file.size;
-        await store.save();
-        _push();
+        await report();
       }
       // Files the collection listed before and no longer does leave the
       // copy; the folder's other files are left alone.
@@ -522,7 +536,7 @@ extension _Collaboration on CoreService {
     final refused = await _deliver(profileId, f, e, [f.address]);
     await (await _followStore(profileId)).save();
     if (refused != null) return 'The admin refused the change: $refused';
-    unawaited(_refreshFollow(profileId, f));
+    _background(_refreshFollow(profileId, f));
     return null;
   }
 }

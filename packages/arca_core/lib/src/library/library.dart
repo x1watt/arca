@@ -131,9 +131,11 @@ class Collection {
   /// `address` (docs/architecture.md, 4.7).
   final List<Map<String, String>> moderators;
 
-  /// Ids of moderators' changes (kind 4782) already folded into the files,
-  /// newest last, at most [maxApplied].
+  /// Moderators' changes (kind 4782) already folded into the files, as
+  /// `<event id>@<created_at>`, newest last, at most [maxApplied].
   final List<String> applied;
+
+  bool hasApplied(String id) => applied.any((e) => e == id || e.startsWith('$id@'));
   static const maxApplied = 500;
 
   bool isModerator(String pubkey) => moderators.any((m) => m['pubkey'] == pubkey);
@@ -476,9 +478,9 @@ class Library {
   }
 
   /// Records that a moderator's change is part of the collection now.
-  Future<void> markApplied(String collectionId, String changeId) async {
+  Future<void> markApplied(String collectionId, String changeId, int createdAt) async {
     final col = byId(collectionId);
-    col.applied.add(changeId);
+    col.applied.add('$changeId@$createdAt');
     if (col.applied.length > Collection.maxApplied) col.applied.removeAt(0);
     await _save();
   }

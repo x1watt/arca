@@ -69,6 +69,18 @@ class CoreService {
   final _syncStores = <String, Future<SyncStore>>{};
   final _shaPaths = <String, Map<String, String>>{};
   final _folding = <String>{};
+  final _tasks = <Future<void>>{};
+  bool _closing = false;
+
+  /// Runs [work] in the background, tracked so [close] can wait for it.
+  void _background(Future<void> work) {
+    if (_closing) return;
+    final f = work.catchError((Object _) {});
+    _tasks.add(f);
+    f.whenComplete(() {
+      _tasks.remove(f);
+    });
+  }
   final _foldAgain = <String>{};
   String? _subtitleSha;
   String _subtitleName = '';
@@ -121,7 +133,7 @@ class CoreService {
       onChange: () async => s.onPush?.call(await s._state()),
       onEvent: (profileId, e) {
         // A moderator's change reached this admin's relay.
-        if (e.kind == kindCollectionChange) unawaited(s._foldIncoming(profileId));
+        if (e.kind == kindCollectionChange) s._background(s._foldIncoming(profileId));
       },
     );
     s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? dataDir}/Arca');
@@ -185,18 +197,38 @@ class CoreService {
           if (f.tags.isNotEmpty) 'tags': f.tags,
         },
     ];
+    final id = profileId ?? _activeId;
     var content = jsonEncode({'name': col.name, 'description': col.description, 'files': files});
-    if (utf8.encode(content).length > 26000) {
-      // Too big for one message (32 KiB with tags and signature): publish
-      // the head and a count. Collections this large need a paged index.
+    final pageTags = <List<String>>[];
+    if (utf8.encode(content).length > maxHeadListBytes) {
+      // Too big for one message: the list goes into page events, published
+      // first, and the head names each page by event id, so a reader
+      // always gets one consistent version.
+      final pages = CollectionIndex.paginate(files);
+      for (var n = 0; n < pages.length; n++) {
+        final d = '${col.id}/$n';
+        final page = await _publishLocal(id, Kind.arcaCollectionPage, pages[n], [
+          ['d', d],
+        ]);
+        pageTags.add(['page', d, page.id]);
+      }
       content = jsonEncode({'name': col.name, 'description': col.description, 'fileCount': files.length});
     }
-    await _publishLocal(profileId ?? _activeId, Kind.arcaCollection, content, [
+    // The newest applied changes by name; older ones are covered by the
+    // watermark, so the head stays one message however long its history.
+    final applied = [
+      for (final e in col.applied)
+        (e.split('@').first, int.tryParse(e.contains('@') ? e.split('@').last : '') ?? 0),
+    ]..sort((a, b) => b.$2.compareTo(a.$2));
+    final named = applied.take(maxAppliedIds).toList();
+    await _publishLocal(id, Kind.arcaCollection, content, [
       ['d', col.id],
       ['title', col.name],
       ['circle', 'arca:circle:${col.circle}'],
       for (final m in col.moderators) ['role', m['pubkey']!, 'moderator', m['address'] ?? ''],
-      for (final id in col.applied.reversed.take(maxAppliedIds)) ['applied', id],
+      for (final (changeId, _) in named) ['applied', changeId],
+      if (applied.length > named.length) ['folded', '${named.last.$2}'],
+      ...pageTags,
     ]);
   }
 
@@ -815,16 +847,16 @@ class CoreService {
             fs.follows.add(f);
             await fs.save();
           }
-          unawaited(_refreshFollow(_activeId, f));
+          _background(_refreshFollow(_activeId, f));
         case 'unfollow':
           final fs = await _followStore(_activeId);
           fs.follows.removeWhere((f) => f.pubkey == args['pubkey']);
           await fs.save();
         case 'refreshFollows':
           for (final f in (await _followStore(_activeId)).follows) {
-            unawaited(_refreshFollow(_activeId, f));
+            _background(_refreshFollow(_activeId, f));
           }
-          unawaited(_foldIncoming(_activeId));
+          _background(_foldIncoming(_activeId));
         case 'propose':
           final owner = args['owner'] as String;
           final fs = await _followStore(_activeId);
@@ -971,7 +1003,7 @@ class CoreService {
             await store.save();
           } else {
             final s = await _syncEntry(_activeId, f, collection);
-            unawaited(_syncOne(_activeId, f, s));
+            _background(_syncOne(_activeId, f, s));
           }
         case 'moderate':
           final fs = await _followStore(_activeId);
@@ -1072,6 +1104,10 @@ class CoreService {
   }
 
   Future<void> close() async {
+    // Background passes (copies, folding) stop at their next step; wait
+    // for them so nothing writes after close.
+    _closing = true;
+    await Future.wait(_tasks.toList()).timeout(const Duration(seconds: 30), onTimeout: () => const []);
     for (final id in _keys.keys.toList()) {
       _forgetKey(id);
     }

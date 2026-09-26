@@ -258,4 +258,41 @@ void main() {
       await x.close();
     }
   }, timeout: const Timeout(Duration(minutes: 3)));
+
+  test('a collection too large for one message is paged, read and copied', () async {
+    final net = LoopbackNetwork();
+    Future<CoreService> open(String name) async {
+      final c = await CoreService.open('${tmp.path}/$name',
+          cost: VaultCost.test, backend: LoopbackBackend(net), startNetwork: false, defaultBaseFolder: '${tmp.path}/$name/Arca');
+      await c.net.start();
+      return c;
+    }
+
+    final a = await open('big-admin'), f = await open('big-follower');
+    final src = await Directory('${tmp.path}/many').create();
+    for (var i = 0; i < 600; i++) {
+      File('${src.path}/file-$i.txt').writeAsStringSync('content of file $i');
+    }
+    final col = (await a.handle('createCollection', {'name': 'Many', 'folder': src.path}))['created'] as String;
+    final sa = await a.handle('state', {});
+    final aPub = (((sa['profiles'] as List).single as Map)['pubkey']) as String;
+    await f.handle('follow', {'address': (((sa['profiles'] as List).single as Map)['arcaAddress'])});
+    Map? colOf(Map<String, Object?> s) {
+      final x = (s['following'] as List).cast<Map>().where((x) => x['pubkey'] == aPub);
+      return x.isEmpty ? null : (x.single['collections'] as Map)[col] as Map?;
+    }
+
+    final sf = await waitFor(f, (s) => (colOf(s)?['files'] as List?)?.length == 600, what: 'F reads all 600 files');
+    expect(colOf(sf)!['complete'], isTrue);
+    await f.handle('sync', {'owner': aPub, 'collection': col});
+    final done = await waitFor(f, (s) {
+      final x = ((s['following'] as List).cast<Map>().single['synced'] as Map)[col] as Map?;
+      return x != null && x['running'] == false && x['done'] == 600;
+    }, what: 'F copied all 600');
+    final folder = (((done['following'] as List).cast<Map>().single['synced'] as Map)[col] as Map)['folder'] as String;
+    expect(File('$folder/file-599.txt').readAsStringSync(), 'content of file 599');
+    for (final x in [a, f]) {
+      await x.close();
+    }
+  }, timeout: const Timeout(Duration(minutes: 3)));
 }
