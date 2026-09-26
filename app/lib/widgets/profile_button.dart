@@ -3,9 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
+import '../screens/me_screens.dart';
 import '../screens/settings_screen.dart';
 import '../screens/wallet_screen.dart';
 import 'common.dart';
+
+/// The menu's own pages.
+const _pages = <String, Widget>{
+  'circles': CirclesScreen(),
+  'liked': LikedScreen(),
+  'history': HistoryScreen(),
+  'help': HelpScreen(),
+};
 
 /// Account avatar in the top-right corner of every main tab.
 class ProfileButton extends StatelessWidget {
@@ -47,6 +56,9 @@ class ProfileButton extends StatelessWidget {
             Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const WalletScreen()),
             );
+          } else if (_pages[v] case final page?) {
+            Navigator.of(context)
+                .push(MaterialPageRoute<void>(builder: (_) => page));
           } else {
             showPrototypeNote(context, v);
           }
@@ -97,10 +109,14 @@ class ProfileButton extends StatelessWidget {
           ),
           const PopupMenuDivider(),
           _item('Edit profile', Icons.badge_outlined, value: 'settings'),
-          _item('My circles', Icons.groups_outlined),
+          _item('My circles', Icons.groups_outlined, value: 'circles'),
           _item('Wallet', Icons.toll_outlined, value: 'wallet'),
-          _item('Liked and shared files', Icons.thumb_up_outlined),
-          _item('History', Icons.history),
+          _item(
+            'Liked and shared files',
+            Icons.thumb_up_outlined,
+            value: 'liked',
+          ),
+          _item('History', Icons.history, value: 'history'),
           const PopupMenuDivider(),
           _item(
             'Storage folders',
@@ -108,7 +124,7 @@ class ProfileButton extends StatelessWidget {
             value: 'folders',
           ),
           _item('Settings', Icons.settings_outlined, value: 'settings'),
-          _item('Help', Icons.help_outline),
+          _item('Help', Icons.help_outline, value: 'help'),
         ],
         child: CircleAvatar(
           radius: 17,

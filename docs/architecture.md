@@ -298,25 +298,33 @@ Data directory: `~/.local/share/arca` on Linux, the app's files directory on And
 
 ```
 arca/
-  device.json          device id, storage folders, active and stay-online profiles
-  i2p/                 router cache and node state (stateDir)
-  content/             shared content store: chunks and blobs by SHA-256
-  catalogs/            downloaded circle catalogs, shared by all profiles
-  media/               Blossom blobs by SHA-256 (own uploads, and media kept for others)
+  device.json          device id, active and stay-online profiles
+  device.key           the device secret the vaults are derived from
+  settings.json        device settings: storage folders, speech model, sharing
+                       limits (Wi-Fi, charging, hours, upload), ask where to store
+                       new collections, space for others' notes
+  i2p/                 router identity, cache and node state (stateDir)
   previews/            video stills and hover GIFs by SHA-256 (9.1)
   subtitles/           work files of the subtitle maker and notes on files it could not do (9.3)
   models/              downloaded speech models (9.3)
   profiles/
     <profile id>/
       vault.bin        encrypted nsec and I2P destination seeds
-      settings.json    this profile's settings
-      events.db        this profile's relay: its events and cached events (SQLite)
-      state.db         circles, followed collections, roles, hold modes, history
+      events.jsonl     this profile's relay: its events and those it keeps for others
+      collections.json its collections
+      follows.json     who it follows and what they publish
+      synced.json      the copies it keeps of others' collections
+      searches.json    its recent searches (never leaves the device)
+      opened.json      the files it opened, for History (never leaves the device)
+      chain/           its test network: config.json, snapshot.json, the circle
+                       logs it runs (log.json, log-<circle>.json) and packed/
 ```
+
+Not built yet, and so not on disk: the shared content store of chunks, circle catalogs, Blossom media and SQLite (the relay's log is replayed into memory at start).
 
 Storage folders (the base folders on each disk, chosen in Settings) hold the files of collections kept "on disk" as plain files in normal folders, and the packed copies of collections kept for sharing. They belong to the device; each profile records which folder each of its collections uses. The profile id is a random local id, not the npub, so the directory names on disk do not identify the account. The media store is shared the same way as the content store: each profile records which blobs it uploaded or keeps, and serves them only under its own address.
 
-All database access goes through the core isolate. SQLite runs there, never on the UI isolate, and large queries are paginated.
+All of it is read and written by the core isolate, never the UI isolate. Lists the UI shows (searches, opened files, likes) are loaded once and kept in memory, so building the state reads no disk. A profile's relay keeps what others publish within the space set in Settings (default 2 GB): once an hour, and when the setting changes, the oldest of others' events go first and the log is rewritten; the profile's own events always stay.
 
 ## 7. Isolates and threads
 
@@ -488,6 +496,7 @@ Built so far (milestones 1 to 5):
   - Tested in process (`test/core_chain_test.dart`: two cores start, join, keep, pay, pay out, claim and restart) and over live I2P (`tool/live_wallet_check.dart`).
   - **Power.** The UI isolate watches the battery and the connection (`battery_plus`, `connectivity_plus`; their plugins answer only there) and tells the core, which tells the chain. Each profile chooses "only while charging" and "only on Wi-Fi or a cable" (on by default on phones): making blocks and preparing copies wait for them. Daily proofs never wait, since a missed one loses everything.
   - **Light mode.** On phones a profile follows the chain lightly by default (`chain/light.dart` in the chain isolate): headers, proven reads of its balance, nonce, circle, standing and sync score after each new head, and transactions it signs through the core and hands to full nodes, sent again until a block holds them. It keeps no files, so joining copies nothing; "Keep files on this device" switches to full mode and copies the corpus then. A founder is never light: its node serves the spec and the circle's log.
+  - **Circles.** Any full member can create a circle on the test network: the chain burns the fee, the creator keeps its log (`log-<circle>.json`) as admin and moderator, lists the test network's files in it so keepers can earn, and its node anchors it. Each anchor also names the I2P address where the log can be fetched (`logAt` in the circle's state), so a member of any circle can fetch it to claim. A member chooses which circle its files earn for (My circles, "Keep my files for it"): its partitions are declared again for that circle.
   - **Reading.** On a test network a profile serves by its circle's rules (`ServingRules`, section 5.7): members whose sync score reaches the circle's threshold, pass holders while their receipts keep up, and others within the free allowance. It reads from others with its key and, when it holds one, its pass, so they can tell. The admin sets the pass price, the free allowance and the member score in the wallet; they go into the circle's log and reach the chain with the next anchor. Anyone can buy a 24-hour pass; after a pass ends, each server settles the receipts it kept.
   - A snapshot a new version cannot read is set aside, and the node starts again from genesis and catches up from its peers.
 

@@ -39,6 +39,10 @@ class CircleState {
   String payoutRoot = '';
   int anchoredAt = -1;
 
+  /// Where the circle's log can be fetched (an I2P address), as its latest
+  /// anchor says; members need it to claim from the pool.
+  String logAt = '';
+
   /// Grains each member has claimed from the pool so far.
   final claimed = <String, int>{};
 
@@ -61,6 +65,7 @@ class CircleState {
     'memberRoot': memberRoot,
     'payoutRoot': payoutRoot,
     'anchoredAt': anchoredAt,
+    'logAt': logAt,
     'claimed': claimed,
     'passPrice': passPrice,
     'freeAllowance': freeAllowance,
@@ -79,6 +84,7 @@ class CircleState {
         ..memberRoot = m['memberRoot'] as String
         ..payoutRoot = m['payoutRoot'] as String
         ..anchoredAt = m['anchoredAt'] as int
+        ..logAt = m['logAt'] as String? ?? ''
         ..claimed.addAll((m['claimed'] as Map).cast<String, int>())
         ..passPrice = m['passPrice'] as int
         ..freeAllowance = m['freeAllowance'] as int
@@ -90,6 +96,7 @@ class CircleState {
     ..memberRoot = memberRoot
     ..payoutRoot = payoutRoot
     ..anchoredAt = anchoredAt
+    ..logAt = logAt
     ..claimed.addAll(claimed)
     ..passPrice = passPrice
     ..freeAllowance = freeAllowance
@@ -409,6 +416,7 @@ class ChainState {
           ..memberRoot = b['memberRoot'] as String? ?? ''
           ..payoutRoot = b['payoutRoot'] as String? ?? ''
           ..anchoredAt = tick;
+        if (b['logAt'] case final String at when at.length <= 128) circle.logAt = at;
         if (b['collections'] case final Map listed) _listCollections(id, listed);
         if (b['reading'] case final Map r) {
           int field(String name) {

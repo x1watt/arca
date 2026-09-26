@@ -34,6 +34,7 @@ import 'social.dart';
 
 part 'chain.dart';
 part 'collaboration.dart';
+part 'personal.dart';
 
 class CoreService {
   CoreService._(this._store, this.net, this._dataDir, this._defaultBase);
@@ -106,6 +107,20 @@ class CoreService {
   final _chainHas = <String>{};
   final _chainErrors = <String, String>{};
 
+  // What each profile keeps for itself (personal.dart): lists by
+  // "<profile>/<name>", as loading futures and as loaded values, and likes
+  // (file SHA-256 to the id of the like event).
+  final _personal = <String, Future<List<Map<String, Object?>>>>{};
+  final _personalLoaded = <String, List<Map<String, Object?>>>{};
+  final _likes = <String, Map<String, String>>{};
+
+  /// Device settings: ask for the storage folder of each new collection,
+  /// and the space each profile's relay gives other people's notes.
+  bool _askFolder = false;
+  int _noteSpace = 2 * 1024 * 1024 * 1024;
+  bool? _lastAllowed;
+  Timer? _minuteTimer;
+
   /// Reading sessions per profile, and profiles settling passes now.
   final _readers = <String, ReaderSession>{};
   final _settling = <String>{};
@@ -126,7 +141,33 @@ class CoreService {
   /// Whether the sharing limits allow serving and heavy chain work now.
   bool get _sharingAllowed =>
       (_sharing['onlyCharging'] != true || _power['charging'] != false) &&
-      (_sharing['onlyUnmetered'] != true || _power['unmetered'] != false);
+      (_sharing['onlyUnmetered'] != true || _power['unmetered'] != false) &&
+      _inSharingHours;
+
+  /// Whether now is inside the sharing hours (from, to: whole hours, the
+  /// window may cross midnight; none set means any time).
+  bool get _inSharingHours {
+    final from = _sharing['hoursFrom'] as int?, to = _sharing['hoursTo'] as int?;
+    if (from == null || to == null || from == to) return true;
+    final h = DateTime.now().hour;
+    return from < to ? h >= from && h < to : h >= from || h < to;
+  }
+
+  /// Once a minute: the sharing hours may have begun or ended, and once an
+  /// hour the space for others' notes is enforced.
+  Future<void> _minuteTick(int minute) async {
+    final allowed = _sharingAllowed;
+    if (allowed != _lastAllowed) {
+      _lastAllowed = allowed;
+      _applySharing();
+      if (_chainPort != null) await _chainCmd('power', _chainPower);
+      _push();
+    }
+    if (minute % 60 == 0) _background(_pruneNotes());
+  }
+
+  /// What the chain needs to know to pause its heavy work.
+  Map<String, Object?> get _chainPower => {..._power, ..._sharing, 'inHours': _inSharingHours};
 
   /// Applies the sharing limits to every profile's file service and to the
   /// chain.
@@ -208,6 +249,12 @@ class CoreService {
       if (s._shouldBeOnline(p)) await s._goOnline(p);
     }
     if (startNetwork) manager.start();
+    for (final p in store.profiles) {
+      await s._loadPersonal(p.id);
+    }
+    var minute = 0;
+    s._minuteTimer = Timer.periodic(const Duration(minutes: 1), (_) => s._minuteTick(++minute));
+    s._background(s._pruneNotes());
     unawaited(s._makePreviews());
     unawaited(s._writeMissingManifests().then((_) => s._migrateSubtitles()).then((_) => s._queueSubtitles()));
     return s;
@@ -223,6 +270,8 @@ class CoreService {
       _whisperModel = m['whisperModel'] as String?;
       _autoSubtitles = m['autoSubtitles'] as bool? ?? true;
       if (m['sharing'] case final Map sharing) _sharing = {..._sharing, ...sharing.cast<String, Object?>()};
+      _askFolder = m['askFolder'] as bool? ?? false;
+      _noteSpace = m['noteSpace'] as int? ?? _noteSpace;
     }
     if (_baseFolders.isEmpty) {
       _baseFolders = [_defaultBase];
@@ -238,6 +287,8 @@ class CoreService {
       'whisperModel': _whisperModel,
       'autoSubtitles': _autoSubtitles,
       'sharing': _sharing,
+      'askFolder': _askFolder,
+      'noteSpace': _noteSpace,
     }),
   );
 
@@ -766,6 +817,9 @@ class CoreService {
             },
       ],
       'chain': _store.active == null ? null : _chainStates[_activeId],
+      'searches': _store.active == null ? const [] : _personalNow(_activeId, 'searches'),
+      'opened': _store.active == null ? const [] : _personalNow(_activeId, 'opened'),
+      'liked': _store.active == null ? const [] : (_likes[_activeId]?.keys.toList() ?? const []),
       // A testnet chosen but not running yet (the network is still coming up).
       'chainPending': _store.active != null && _chainHas.contains(_activeId) && !_chainStates.containsKey(_activeId),
       'chainError': _store.active == null ? null : _chainErrors[_activeId],
@@ -789,11 +843,25 @@ class CoreService {
     ],
     'net': {'state': net.state.name, 'error': net.error},
     'sharing': {..._sharing, 'allowed': _sharingAllowed},
+    'askFolder': _askFolder,
+    'noteSpace': _noteSpace,
   };
 
   /// Handles one request; returns the new state, a result, or an error.
   Future<Map<String, Object?>> handle(String command, Map<String, Object?> args) async {
     try {
+      if (const {
+        'rememberSearch',
+        'clearSearches',
+        'forgetSearch',
+        'opened',
+        'clearOpened',
+        'like',
+      }.contains(command)) {
+        final error = await _personalCommand(command, args);
+        if (error != null) return error;
+        return await _state();
+      }
       if (command.startsWith('chain')) {
         final error = await _chainCommand(command, args);
         if (error != null) return error;
@@ -805,10 +873,12 @@ class CoreService {
         case 'create':
           final p = await _store.create(name: args['name'] as String?);
           await _address(p.id);
+          await _loadPersonal(p.id);
           await _syncOnline();
         case 'import':
           final p = await _store.importKey(args['key'] as String, name: args['name'] as String?);
           await _address(p.id);
+          await _loadPersonal(p.id);
           if (args['activate'] == true) await _store.setActive(p.id);
           await _syncOnline();
         case 'setActive':
@@ -1159,12 +1229,20 @@ class CoreService {
             _transcriber.cancel();
           }
         case 'setSharing':
-          for (final k in ['onlyUnmetered', 'onlyCharging', 'uploadLimit', 'freeShare']) {
+          for (final k in ['onlyUnmetered', 'onlyCharging', 'uploadLimit', 'freeShare', 'hoursFrom', 'hoursTo']) {
             if (args.containsKey(k)) _sharing[k] = args[k];
           }
           await _saveSettings();
+          _lastAllowed = _sharingAllowed;
           _applySharing();
-          if (_chainPort != null) await _chainCmd('power', {..._power, ..._sharing});
+          if (_chainPort != null) await _chainCmd('power', _chainPower);
+        case 'setAskFolder':
+          _askFolder = args['on'] == true;
+          await _saveSettings();
+        case 'setNoteSpace':
+          _noteSpace = (args['bytes'] as num).toInt();
+          await _saveSettings();
+          _background(_pruneNotes());
         case 'hashFile':
           final (sha256, sha1, size) = await hashFile(File(args['path'] as String));
           return {'sha256': sha256, 'sha1': sha1, 'size': size};
@@ -1192,6 +1270,7 @@ class CoreService {
     // for them so nothing writes after close.
     _closing = true;
     await Future.wait(_tasks.toList()).timeout(const Duration(seconds: 30), onTimeout: () => const []);
+    _minuteTimer?.cancel();
     await _chainStop();
     for (final id in _keys.keys.toList()) {
       _forgetKey(id);

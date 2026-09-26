@@ -116,7 +116,7 @@ class FileEventStore extends MemoryEventStore {
   FileEventStore._(this.file, this._sink);
 
   final File file;
-  final IOSink _sink;
+  IOSink _sink;
 
   static Future<FileEventStore> open(File file) async {
     await file.parent.create(recursive: true);
@@ -142,6 +142,38 @@ class FileEventStore extends MemoryEventStore {
       _sink.writeln(jsonEncode(e.toJson()));
     }
     return r;
+  }
+
+  /// Keeps the events [removable] picks within [maxBytes] (their JSON
+  /// size), dropping the oldest first, and rewrites the file without them.
+  /// Returns how many were dropped.
+  Future<int> prune(int maxBytes, bool Function(NostrEvent) removable) async {
+    final candidates = [
+      for (final e in _byId.values)
+        if (removable(e)) (e, utf8.encode(jsonEncode(e.toJson())).length),
+    ]..sort((a, b) => a.$1.createdAt.compareTo(b.$1.createdAt));
+    var total = candidates.fold(0, (n, c) => n + c.$2);
+    var dropped = 0;
+    for (final (e, size) in candidates) {
+      if (total <= maxBytes) break;
+      _remove(e);
+      total -= size;
+      dropped++;
+    }
+    if (dropped == 0) return 0;
+    // Rewrite the log with what is left, then continue appending to it.
+    await _sink.flush();
+    await _sink.close();
+    final tmp = File('${file.path}.tmp');
+    final out = tmp.openWrite();
+    for (final e in _byId.values) {
+      out.writeln(jsonEncode(e.toJson()));
+    }
+    await out.flush();
+    await out.close();
+    await tmp.rename(file.path);
+    _sink = file.openWrite(mode: FileMode.append);
+    return dropped;
   }
 
   @override

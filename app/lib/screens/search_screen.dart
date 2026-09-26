@@ -27,9 +27,6 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final _controller = SearchController();
 
-  /// Searches run in this session, most recent first.
-  final _history = <String>[];
-
   /// The submitted query; null means the home page is shown.
   String? _query;
   _Scope _scope = _Scope.all;
@@ -50,11 +47,8 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _run(String query) {
     final q = query.trim();
-    if (q.isNotEmpty) {
-      _history
-        ..remove(q)
-        ..insert(0, q);
-    }
+    // Kept per profile by the core, so it survives a restart.
+    if (q.isNotEmpty) Core.instance.rememberSearch(q);
     _controller.text = q;
     setState(() {
       _query = q.isEmpty ? null : q;
@@ -89,7 +83,7 @@ class _SearchScreenState extends State<SearchScreen> {
             titleSpacing: 16,
             title: _SearchField(
               controller: _controller,
-              history: _history,
+              history: s.searches,
               completions: (text) => _completions(s, text),
               onSubmitted: _run,
               onClear: _clear,
@@ -563,8 +557,8 @@ class _SearchField extends StatelessWidget {
                   trailing: IconButton(
                     tooltip: 'Remove from history',
                     icon: const Icon(Icons.close, size: 18),
-                    onPressed: () {
-                      history.remove(h);
+                    onPressed: () async {
+                      await Core.instance.forgetSearch(h);
                       controller.text = controller.text;
                     },
                   ),

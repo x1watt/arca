@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
 
+import 'package:package_info_plus/package_info_plus.dart';
+
 import '../core/core_client.dart';
 import 'wallet_screen.dart';
 import '../core/pickers.dart';
@@ -16,16 +18,11 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  bool _askEachTime = false;
   // Sharing limits are the core's (setSharing); a slider shows the value
   // being dragged until it is let go.
   double? _upload;
   double? _freeShare;
-  double _noteCache = 2;
-  double _mediaCache = 5;
-  bool _circleRelay = false;
-  final _relayCircles = <String>{};
-  double _relayBudget = 20;
+  double? _noteSpace;
 
   final _core = Core.instance;
 
@@ -52,7 +49,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final joined = [state.commons];
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: Center(
@@ -374,87 +370,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ListTile(
                 leading: const Icon(Icons.schedule),
                 title: const Text('Hours'),
-                subtitle: const Text('Any time'),
+                subtitle: Text(
+                  state.sharing.hoursFrom == null
+                      ? 'Any time'
+                      : 'From ${_hour(state.sharing.hoursFrom!)} to ${_hour(state.sharing.hoursTo!)}',
+                ),
                 trailing: const Icon(Icons.chevron_right),
-                onTap: () => showPrototypeNote(context, 'Sharing hours'),
+                onTap: () => _hoursDialog(context, state.sharing),
               ),
-
-              // Circle relay.
-              const SectionTitle('Circle relay'),
-              SwitchListTile(
-                secondary: const Icon(Icons.dns_outlined),
-                title: const Text('Volunteer as a circle relay'),
-                subtitle: const Text(
-                  'Circles automatically pick their most available volunteers to keep and serve '
-                  'members\' notes and comments while they are offline.',
-                ),
-                isThreeLine: true,
-                value: _circleRelay,
-                onChanged: (v) => setState(() => _circleRelay = v),
-              ),
-              if (_circleRelay) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(72, 0, 16, 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        state.sharing.onlyUnmetered ||
-                                state.sharing.onlyCharging
-                            ? Icons.warning_amber_rounded
-                            : Icons.check_circle_outline,
-                        size: 16,
-                        color: muted?.color,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          state.sharing.onlyUnmetered ||
-                                  state.sharing.onlyCharging
-                              ? 'Declared as intermittent because sharing is limited to WiFi or '
-                                    'charging. Circles rarely pick intermittent machines; turn '
-                                    'those limits off on a computer that is always on.'
-                              : 'Declared as always on.',
-                          style: muted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                for (final c in joined)
-                  CheckboxListTile(
-                    secondary: const SizedBox(width: 24),
-                    title: Text(c.name),
-                    subtitle: Text(
-                      _relayCircles.contains(c.id)
-                          ? 'Volunteering; relay selection is not built yet'
-                          : 'Not volunteering',
-                    ),
-                    value: _relayCircles.contains(c.id),
-                    onChanged: (on) => setState(
-                      () => on!
-                          ? _relayCircles.add(c.id)
-                          : _relayCircles.remove(c.id),
-                    ),
-                  ),
-                _slider(
-                  Icons.storage_outlined,
-                  'Storage for circle notes',
-                  '${_relayBudget.round()} GB',
-                  _relayBudget,
-                  1,
-                  200,
-                  (v) => _relayBudget = v,
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(72, 0, 16, 8),
-                  child: Text(
-                    'While volunteering, the circle\'s relays check this machine at random times '
-                    'and publish how often it answered each day. Others can then tell it is online '
-                    'most of the time; its IP address stays hidden behind I2P.',
-                    style: muted,
-                  ),
-                ),
-              ],
 
               // Storage.
               SectionTitle(
@@ -497,26 +420,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SwitchListTile(
                 secondary: const Icon(Icons.help_outline),
                 title: const Text('Ask where to store each new collection'),
-                value: _askEachTime,
-                onChanged: (v) => setState(() => _askEachTime = v),
+                subtitle: state.storage.length > 1
+                    ? null
+                    : const Text(
+                        'With one storage folder there is nothing to ask',
+                      ),
+                value: state.askFolder,
+                onChanged: (v) => _run(_core.setAskFolder(v)),
               ),
-              _slider(
+              _liveSlider(
                 Icons.forum_outlined,
                 'Space for other people\'s notes',
-                '${_noteCache.round()} GB',
-                _noteCache,
+                (v) => '${v.toStringAsFixed(v < 10 ? 1 : 0)} GB',
+                _noteSpace ?? state.noteSpace / (1024 * 1024 * 1024),
                 0.5,
                 50,
-                (v) => _noteCache = v,
-              ),
-              _slider(
-                Icons.photo_library_outlined,
-                'Space for pictures in notes',
-                '${_mediaCache.round()} GB',
-                _mediaCache,
-                0.5,
-                50,
-                (v) => _mediaCache = v,
+                (v) => setState(() => _noteSpace = v),
+                (v) async {
+                  await _run(
+                    _core.setNoteSpace((v * 1024 * 1024 * 1024).round()),
+                  );
+                  if (mounted) setState(() => _noteSpace = null);
+                },
               ),
 
               // Subtitles.
@@ -526,29 +451,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // Search.
               const SectionTitle('Search'),
               ListTile(
-                leading: const Icon(Icons.inventory_2_outlined),
-                title: const Text('Circle catalogs on this device'),
-                subtitle: const Text('6 circles, 18.4 GB'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => showPrototypeNote(context, 'Catalogs'),
-              ),
-              ListTile(
                 leading: const Icon(Icons.history),
                 title: const Text('Clear search history of this profile'),
-                onTap: () => showPrototypeNote(context, 'Clear history'),
+                subtitle: Text(
+                  state.searches.isEmpty
+                      ? 'Nothing to clear'
+                      : plural(state.searches.length, 'recent search'),
+                ),
+                enabled: state.searches.isNotEmpty,
+                onTap: () => _run(_core.clearSearches()),
               ),
 
               const SectionTitle('About'),
-              const ListTile(
-                leading: Icon(Icons.info_outline),
-                title: Text('Arca prototype'),
-                subtitle: Text('Version 0.1.0'),
+              FutureBuilder(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, info) => ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Arca'),
+                  subtitle: Text(
+                    info.hasData
+                        ? 'Version ${info.data!.version} (${info.data!.buildNumber})'
+                        : '',
+                  ),
+                ),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  static String _hour(int h) => '${h.toString().padLeft(2, '0')}:00';
+
+  /// Picks the hours this device shares in, or any time.
+  Future<void> _hoursDialog(BuildContext context, SharingView sharing) async {
+    var from = sharing.hoursFrom ?? 22, to = sharing.hoursTo ?? 7;
+    final r = await showDialog<(int, int)?>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, set) {
+          DropdownButton<int> pick(int value, void Function(int) on) =>
+              DropdownButton<int>(
+                value: value,
+                items: [
+                  for (var h = 0; h < 24; h++)
+                    DropdownMenuItem(value: h, child: Text(_hour(h))),
+                ],
+                onChanged: (v) => set(() => on(v!)),
+              );
+          return AlertDialog(
+            title: const Text('Share only between'),
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                pick(from, (v) => from = v),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('and'),
+                ),
+                pick(to, (v) => to = v),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, (-1, -1)),
+                child: const Text('Any time'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, (from, to)),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (r == null) return;
+    if (r.$1 < 0 || r.$1 == r.$2) {
+      await _run(_core.setSharing(anyTime: true));
+    } else {
+      await _run(_core.setSharing(hoursFrom: r.$1, hoursTo: r.$2));
+    }
   }
 
   /// A slider for a setting the core keeps: [drag] while moving, [save]
@@ -573,28 +557,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         max: max,
         onChanged: drag,
         onChangeEnd: save,
-      ),
-    );
-  }
-
-  Widget _slider(
-    IconData icon,
-    String label,
-    String value,
-    double current,
-    double min,
-    double max,
-    void Function(double) apply,
-  ) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(label),
-      trailing: Text(value),
-      subtitle: Slider(
-        value: current,
-        min: min,
-        max: max,
-        onChanged: (v) => setState(() => apply(v)),
       ),
     );
   }

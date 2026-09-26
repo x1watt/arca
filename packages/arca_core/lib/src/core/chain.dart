@@ -133,6 +133,7 @@ extension _Chain on CoreService {
       'spec': spec.json,
       'keep': config['keep'],
       'mining': config['mining'] ?? true,
+      'keepCircle': config['keepCircle'],
       'founderAddress': founderI2p,
       'founderArca': config['founderArca'],
       // Phones follow lightly unless told to keep files; a founder serves
@@ -380,6 +381,7 @@ extension _Chain on CoreService {
       case 'chainReading':
         final r = await _chainCmd('reading', {
           'profile': id,
+          'circle': ?args['circle'],
           'reading': {
             if (args['passPrice'] != null) 'passPrice': grainsOf('${args['passPrice']}'),
             if (args['freeAllowance'] != null) 'freeAllowance': args['freeAllowance'],
@@ -388,7 +390,7 @@ extension _Chain on CoreService {
         });
         return r['error'] == null ? null : r;
       case 'chainBuyPass':
-        final r = await _chainCmd('buyPass', {'profile': id});
+        final r = await _chainCmd('buyPass', {'profile': id, 'circle': ?args['circle']});
         return r['error'] == null ? null : r;
       case 'chainLight':
         final config = await _chainConfig(id);
@@ -410,14 +412,21 @@ extension _Chain on CoreService {
       case 'chainPower':
         _power = {'charging': args['charging'] ?? true, 'unmetered': args['unmetered'] ?? true};
         _applySharing();
-        if (_chainPort != null) await _chainCmd('power', {..._power, ..._sharing});
+        if (_chainPort != null) await _chainCmd('power', _chainPower);
         return null;
       case 'chainPayout':
-        final r = await _chainCmd('payout', {'profile': id});
+        final r = await _chainCmd('payout', {'profile': id, 'circle': ?args['circle']});
         return r['error'] == null ? null : r;
       case 'chainClaim':
-        final r = await _chainCmd('claim', {'profile': id});
+        final r = await _chainCmd('claim', {'profile': id, 'circle': ?args['circle']});
         return r['error'] == null ? null : r;
+      case 'chainCreateCircle':
+        final r = await _chainCmd('createCircle', {'profile': id, 'circle': args['circle'], 'name': args['name']});
+        return r['error'] == null ? null : r;
+      case 'chainKeepFor':
+        final r = await _chainCmd('keepFor', {'profile': id, 'circle': args['circle']});
+        if (r['error'] != null) return r;
+        return _chainSetting('keepCircle', args['circle']);
     }
     return {'error': 'unknown command $command'};
   }

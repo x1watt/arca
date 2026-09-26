@@ -132,9 +132,46 @@ void main() {
     sb = await waitFor(b, (s) => (chainOf(s)['balance'] as int) > balanceBefore, what: 'the claim is paid');
     print('joiner: ${(chainOf(sb)['balance'] as int) / m} marcas after the claim');
 
+    // A second circle: the founder creates it; the joiner keeps for it; it
+    // earns, pays out, and the joiner claims (the log comes from where the
+    // circle's anchor says).
+    r = await a.handle('chainCreateCircle', {'circle': 'radio', 'name': 'Radio archive'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    List<Map> circlesOf(Map<String, Object?> s) => ((chainOf(s)['circles'] as List?) ?? const []).cast<Map>();
+    await waitFor(
+      b,
+      (s) => circlesOf(s).any((c) => c['id'] == 'radio' && c['live'] == true),
+      what: 'the new circle is anchored',
+    );
+    r = await b.handle('chainKeepFor', {'circle': 'radio'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    await waitFor(
+      a,
+      (s) => ((circlesOf(s).firstWhere((c) => c['id'] == 'radio')['pool']) as int) > 0,
+      what: 'the new circle earns from the joiner\'s keeping',
+      seconds: 60,
+    );
+    r = await a.handle('chainPayout', {'circle': 'radio'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    final beforeRadio = chainOf(await b.handle('state', {}))['balance'] as int;
+    Map<String, Object?>? radioClaim;
+    final radioEnd = DateTime.now().add(const Duration(seconds: 60));
+    while (DateTime.now().isBefore(radioEnd)) {
+      radioClaim = await b.handle('chainClaim', {'circle': 'radio'});
+      if (radioClaim['error'] == null) break;
+      await Future<void>.delayed(const Duration(seconds: 1));
+    }
+    expect(radioClaim!['error'], isNull, reason: 'claimed from the new circle: ${radioClaim['error']}');
+    await waitFor(b, (s) => (chainOf(s)['balance'] as int) > beforeRadio, what: 'the new circle\'s claim is paid');
+
     // The admin sets how the circle is read; once anchored, the joiner
     // buys a pass.
-    r = await a.handle('chainReading', {'passPrice': '2', 'freeAllowance': 50 * 1024 * 1024, 'memberScore': 0});
+    r = await a.handle('chainReading', {
+      'circle': 'radio',
+      'passPrice': '2',
+      'freeAllowance': 50 * 1024 * 1024,
+      'memberScore': 0,
+    });
     expect(r['error'], isNull);
     sb = await waitFor(
       b,

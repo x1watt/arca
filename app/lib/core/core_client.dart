@@ -614,6 +614,46 @@ class PartitionView {
   );
 }
 
+/// A circle on the test chain, and this profile's part in it.
+class ChainCircleView {
+  const ChainCircleView({
+    required this.id,
+    required this.name,
+    required this.pool,
+    required this.admin,
+    required this.moderator,
+    required this.moderators,
+    required this.live,
+    required this.keeping,
+    required this.claimed,
+  });
+  final String id;
+  final String name;
+  final int pool;
+  final bool admin;
+  final bool moderator;
+  final int moderators;
+
+  /// Anchored within the last day, so it earns.
+  final bool live;
+
+  /// This profile keeps files for it.
+  final bool keeping;
+  final int claimed;
+
+  factory ChainCircleView.fromMap(Map m) => ChainCircleView(
+    id: m['id'] as String,
+    name: m['name'] as String,
+    pool: m['pool'] as int,
+    admin: m['admin'] as bool,
+    moderator: m['moderator'] as bool,
+    moderators: m['moderators'] as int,
+    live: m['live'] as bool,
+    keeping: m['keeping'] as bool,
+    claimed: m['claimed'] as int,
+  );
+}
+
 /// The active profile's place on the test chain: its wallet, what it keeps
 /// and its circle's pool.
 class ChainView {
@@ -648,7 +688,15 @@ class ChainView {
     required this.freeAllowance,
     required this.memberScore,
     required this.passEndsAt,
+    this.circles = const [],
+    this.circleFee = 0,
   });
+
+  /// Every circle on the chain (full mode only).
+  final List<ChainCircleView> circles;
+
+  /// What creating a circle burns, in grains.
+  final int circleFee;
   final String invite;
   final String name;
   final bool founder;
@@ -734,8 +782,31 @@ class ChainView {
       freeAllowance: reading?['freeAllowance'] as int? ?? 0,
       memberScore: reading?['memberScore'] as int? ?? 0,
       passEndsAt: (reading?['myPass'] as Map?)?['endsAt'] as int?,
+      circles: [
+        for (final c in m['circles'] as List? ?? const [])
+          ChainCircleView.fromMap(c as Map),
+      ],
+      circleFee: m['circleFee'] as int? ?? 0,
     );
   }
+}
+
+/// A file this profile opened, for History.
+class OpenedFile {
+  const OpenedFile(this.sha256, this.name, this.mime, this.at);
+  final String sha256;
+  final String name;
+  final String mime;
+
+  /// Seconds since the epoch.
+  final int at;
+
+  factory OpenedFile.fromMap(Map m) => OpenedFile(
+    m['sha256'] as String? ?? '',
+    m['name'] as String? ?? '',
+    m['mime'] as String? ?? '',
+    m['at'] as int? ?? 0,
+  );
 }
 
 /// When this device shares with others and does the chain's heavy work.
@@ -746,8 +817,15 @@ class SharingView {
     this.uploadLimit = 2 * 1024 * 1024,
     this.freeShare = 20,
     this.allowed = true,
+    this.hoursFrom,
+    this.hoursTo,
   });
   final bool onlyUnmetered;
+
+  /// Sharing only from [hoursFrom] to [hoursTo] (whole hours; may cross
+  /// midnight), or any time when null.
+  final int? hoursFrom;
+  final int? hoursTo;
   final bool onlyCharging;
 
   /// Bytes per second.
@@ -767,6 +845,8 @@ class SharingView {
           uploadLimit: m['uploadLimit'] as int? ?? 2 * 1024 * 1024,
           freeShare: (m['freeShare'] as num?)?.toInt() ?? 20,
           allowed: m['allowed'] as bool? ?? true,
+          hoursFrom: m['hoursFrom'] as int?,
+          hoursTo: m['hoursTo'] as int?,
         );
 }
 
@@ -804,6 +884,11 @@ class CoreState {
     this.chainPending = false,
     this.chainError,
     this.sharing = const SharingView(),
+    this.searches = const [],
+    this.opened = const [],
+    this.liked = const {},
+    this.askFolder = false,
+    this.noteSpace = 2 * 1024 * 1024 * 1024,
   });
   final List<ProfileView> profiles;
   final String? activeId;
@@ -829,6 +914,20 @@ class CoreState {
   /// Why the test network could not start on this device, if it could not.
   final String? chainError;
   final SharingView sharing;
+
+  /// This profile's recent searches, newest first.
+  final List<String> searches;
+
+  /// Files this profile opened, newest first.
+  final List<OpenedFile> opened;
+
+  /// SHA-256 of the files this profile likes (and so shares).
+  final Set<String> liked;
+
+  /// Device settings: ask where to store each new collection; the space
+  /// each profile's relay gives other people's notes, in bytes.
+  final bool askFolder;
+  final int noteSpace;
 
   List<ProposalView> proposalsFor(String collectionId) =>
       proposals.where((p) => p.collectionId == collectionId).toList();
@@ -975,6 +1074,17 @@ class Core {
       chainPending: result['chainPending'] as bool? ?? false,
       chainError: result['chainError'] as String?,
       sharing: SharingView.fromMap(result['sharing'] as Map?),
+      searches: [
+        for (final e in result['searches'] as List? ?? const [])
+          (e as Map)['query'] as String,
+      ],
+      opened: [
+        for (final e in result['opened'] as List? ?? const [])
+          OpenedFile.fromMap(e as Map),
+      ],
+      liked: {...(result['liked'] as List? ?? const []).cast<String>()},
+      askFolder: result['askFolder'] as bool? ?? false,
+      noteSpace: result['noteSpace'] as int? ?? 2 * 1024 * 1024 * 1024,
     );
   }
 
@@ -1039,11 +1149,13 @@ class Core {
     String name,
     String description, {
     String? folder,
+    String? base,
   }) async {
     final r = await _call('createCollection', {
       'name': name,
       'description': description,
       'folder': folder,
+      'base': ?base,
     });
     if (r['error'] != null) return (r['error'] as String, null);
     _apply(r);
@@ -1222,23 +1334,51 @@ class Core {
       _change('chainKeep', {'partition': partition, 'keep': keep});
   Future<String?> chainMining(bool on) => _change('chainMining', {'on': on});
 
-  /// When this device shares (Settings).
+  /// When this device shares (Settings). [anyTime] clears the hours.
   Future<String?> setSharing({
     bool? onlyUnmetered,
     bool? onlyCharging,
     int? uploadLimit,
     int? freeShare,
+    int? hoursFrom,
+    int? hoursTo,
+    bool anyTime = false,
   }) => _change('setSharing', {
     'onlyUnmetered': ?onlyUnmetered,
     'onlyCharging': ?onlyCharging,
     'uploadLimit': ?uploadLimit,
     'freeShare': ?freeShare,
+    if (anyTime) ...{'hoursFrom': null, 'hoursTo': null},
+    'hoursFrom': ?hoursFrom,
+    'hoursTo': ?hoursTo,
   });
+
+  Future<String?> setAskFolder(bool on) => _change('setAskFolder', {'on': on});
+  Future<String?> setNoteSpace(int bytes) =>
+      _change('setNoteSpace', {'bytes': bytes});
+
+  // What a profile keeps for itself.
+
+  Future<String?> rememberSearch(String query) =>
+      _change('rememberSearch', {'query': query});
+  Future<String?> clearSearches() => _change('clearSearches');
+  Future<String?> forgetSearch(String query) =>
+      _change('forgetSearch', {'query': query});
+  Future<String?> rememberOpened(FileView f) =>
+      _change('opened', {'sha256': f.sha256, 'name': f.name, 'mime': f.mime});
+  Future<String?> clearOpened() => _change('clearOpened');
+  Future<String?> like(String sha256, bool on) =>
+      _change('like', {'sha256': sha256, 'on': on});
 
   /// The device's power and connection, from [PowerWatch].
   Future<void> setPower({required bool charging, required bool unmetered}) =>
       _call('chainPower', {'charging': charging, 'unmetered': unmetered});
-  Future<String?> chainPayout() => _change('chainPayout');
+  Future<String?> chainPayout([String? circle]) =>
+      _change('chainPayout', {'circle': ?circle});
+  Future<String?> chainCreateCircle(String id, String name) =>
+      _change('chainCreateCircle', {'circle': id, 'name': name});
+  Future<String?> chainKeepFor(String circle) =>
+      _change('chainKeepFor', {'circle': circle});
   Future<String?> chainLight(bool on) => _change('chainLight', {'on': on});
   Future<String?> chainBuyPass() => _change('chainBuyPass');
 
@@ -1252,7 +1392,8 @@ class Core {
     'freeAllowance': ?freeAllowance,
     'memberScore': ?memberScore,
   });
-  Future<String?> chainClaim() => _change('chainClaim');
+  Future<String?> chainClaim([String? circle]) =>
+      _change('chainClaim', {'circle': ?circle});
 
   /// SHA-256 and SHA-1 of a file on disk, computed on the core isolate.
   Future<(String, String)?> hashFile(String path) async {

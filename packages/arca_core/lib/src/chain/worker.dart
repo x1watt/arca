@@ -131,7 +131,12 @@ class _Member {
   final String dir;
   final TestnetSpec spec;
   final ChainNode node;
-  CircleLog? log;
+
+  /// The logs of the circles this member runs (as admin), by circle.
+  final logs = <String, CircleLog>{};
+
+  /// The circle this member keeps files for.
+  late String keepCircle = spec.circleId;
 
   /// The founder's I2P address (null for the founder): where the circle's
   /// log comes from.
@@ -172,11 +177,15 @@ class ChainWorker {
   bool _onlyCharging = false;
   bool _onlyUnmetered = false;
 
+  /// Whether now is inside the owner's sharing hours.
+  bool _inHours = true;
+
   /// Why heavy work waits for [m], or null when it may run. Daily proofs
   /// are not held back: a missed one loses everything.
   String? _paused(_Member m) {
     if (_onlyCharging && !_charging) return 'charging';
     if (_onlyUnmetered && !_unmetered) return 'network';
+    if (!_inHours) return 'hours';
     return null;
   }
 
@@ -274,6 +283,7 @@ class ChainWorker {
         _unmetered = a['unmetered'] as bool? ?? true;
         _onlyCharging = a['onlyCharging'] as bool? ?? false;
         _onlyUnmetered = a['onlyUnmetered'] as bool? ?? false;
+        _inHours = a['inHours'] as bool? ?? true;
         for (final m in _members.values) {
           _applyPower(m);
           unawaited(_prepare(m));
@@ -287,12 +297,14 @@ class ChainWorker {
         m.node.submit(TxType.transfer, {'to': a['to'], 'amount': amount});
         return {};
       case 'payout':
-        return _payout(_members[a['profile']]!);
+        final m = _members[a['profile']]!;
+        return _payout(m, a['circle'] as String? ?? m.keepCircle);
       case 'reading':
         // The admin's reading settings, into the circle's log and, with the
         // next anchor, onto the chain.
         final m = _members[a['profile']]!;
-        final log = m.log;
+        final circleId = a['circle'] as String? ?? m.keepCircle;
+        final log = m.logs[circleId];
         if (log == null || log.admin != m.pubkey) return {'error': 'Only the circle\'s admin sets how it is read.'};
         final policy = {...log.policy.toJson(), ...(a['reading'] as Map).cast<String, Object?>()};
         try {
@@ -300,17 +312,32 @@ class ChainWorker {
         } on LogError catch (e) {
           return {'error': e.message};
         }
-        await _saveLog(m);
+        await _saveLog(m, circleId);
         return {};
       case 'buyPass':
         final m = _members[a['profile']]!;
-        final circle = m.node.state.circles[m.spec.circleId];
+        final circleId = a['circle'] as String? ?? m.keepCircle;
+        final circle = m.node.state.circles[circleId];
         if (circle == null || circle.passPrice <= 0) return {'error': 'This circle sells no passes.'};
         if (m.node.state.balanceOf(m.pubkey) < circle.passPrice) {
           return {'error': 'The balance is not enough for a pass.'};
         }
-        final tx = await m.node.submit(TxType.buyPass, {'circle': m.spec.circleId});
+        final tx = await m.node.submit(TxType.buyPass, {'circle': circleId});
         return {'pass': tx.id};
+      case 'createCircle':
+        return _createCircle(_members[a['profile']]!, a['circle'] as String? ?? '', a['name'] as String? ?? '');
+      case 'keepFor':
+        final m = _members[a['profile']]!;
+        final circleId = a['circle'] as String? ?? '';
+        if (!m.node.state.circles.containsKey(circleId)) return {'error': 'No such circle on the chain.'};
+        m.keepCircle = circleId;
+        // Declaring again for another circle moves the keeping (and what it
+        // earns) there.
+        final declared = m.node.state.declarations[m.pubkey]?.keys.toList() ?? const <int>[];
+        if (declared.isNotEmpty) {
+          await m.node.submit(TxType.declare, {'circle': circleId, 'partitions': declared..sort()});
+        }
+        return {};
       case 'settle':
         // Receipts this profile's server kept, for passes that ended.
         final m = _members[a['profile']]!;
@@ -327,7 +354,8 @@ class ChainWorker {
         }
         return {'settled': sent};
       case 'claim':
-        return _claim(_members[a['profile']]!);
+        final m = _members[a['profile']]!;
+        return _claim(m, a['circle'] as String? ?? m.keepCircle);
       case 'leave':
         final m = _members.remove(a['profile']);
         if (m != null) await _close(m);
@@ -424,13 +452,19 @@ class ChainWorker {
       ..founderAddress = a['founderAddress'] as String?;
     m.miningWanted = a['mining'] as bool? ?? true;
     _applyPower(m);
-    // The founder keeps the circle's log.
-    final logFile = File('$dir/log.json');
-    if (await logFile.exists()) {
-      m.log = CircleLog.replay(spec.circleId, spec.founder, [
-        for (final e in jsonDecode(await logFile.readAsString()) as List) LogEntry.fromJson(e as Map),
-      ]);
-    } else if (spec.founder == node.key) {
+    m.keepCircle = a['keepCircle'] as String? ?? spec.circleId;
+    // The logs of the circles this member runs: the founder's genesis circle
+    // in log.json, circles it created in log-<circle>.json.
+    await for (final f in Directory(dir).list()) {
+      final name = f.path.split('/').last;
+      final match = RegExp(r'^log(?:-([a-z0-9-]+))?\.json$').firstMatch(name);
+      if (f is! File || match == null) continue;
+      final circleId = match.group(1) ?? spec.circleId;
+      final entries = [for (final e in jsonDecode(await f.readAsString()) as List) LogEntry.fromJson(e as Map)];
+      if (entries.isEmpty) continue;
+      m.logs[circleId] = CircleLog.replay(circleId, entries.first.author, entries);
+    }
+    if (!m.logs.containsKey(spec.circleId) && spec.founder == node.key) {
       // The admin appoints itself moderator: moderators accept collections.
       final log = CircleLog(spec.circleId, admin: spec.founder);
       await log.writeWith(signer, LogType.appoint, {'key': spec.founder});
@@ -439,24 +473,25 @@ class ChainWorker {
         'partitions': [for (var i = 0; i < spec.partitionSizes.length; i++) i],
         'root': spec.corpusRoot,
       });
-      m.log = log;
-      await _saveLog(m);
+      m.logs[spec.circleId] = log;
+      await _saveLog(m, spec.circleId);
     }
     Future<Map<String, Object?>?> answer(String from, Map msg) async {
       switch (msg['t']) {
         case 'getSpec':
           return {'t': 'spec', 'spec': spec.json};
-        case 'getLog' when m.log != null:
+        case 'getLog' when m.logs.containsKey(msg['circle'] ?? spec.circleId):
           return {
             't': 'log',
-            'entries': [for (final e in m.log!.entries) e.toJson()],
+            'entries': [for (final e in m.logs[msg['circle'] ?? spec.circleId]!.entries) e.toJson()],
           };
       }
       return null;
     }
 
     node.answer = answer;
-    node.anchorBody = (circle) => circle == spec.circleId ? m.log?.anchorBody() : null;
+    // Each anchor also says where the log can be fetched: here.
+    node.anchorBody = (circle) => m.logs[circle] == null ? null : {...m.logs[circle]!.anchorBody(), 'logAt': address};
     _members[profile] = m;
     node.start();
     m.timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick(m));
@@ -615,7 +650,7 @@ class ChainWorker {
       case 'claim':
         final c = m.circle;
         if (c == null) return {'error': 'The circle is not read yet; try again in a moment.'};
-        final r = await _claimBody(m.spec, c, m.pubkey, null, m.address, m.founderAddress);
+        final r = await _claimBody(m.spec, m.spec.circleId, c, m.pubkey, null, m.address, m.founderAddress);
         if (r['body'] case final Map body) {
           await _lightSubmit(m, TxType.claim, body.cast<String, Object?>());
           return {'claimed': r['owed']};
@@ -665,9 +700,9 @@ class ChainWorker {
     return {'block': header.asBlock.toJson(), 'work': cp['work'], 'state': entries};
   }
 
-  Future<void> _saveLog(_Member m) async {
-    final f = File('${m.dir}/log.json');
-    await File('${f.path}.tmp').writeAsString(jsonEncode([for (final e in m.log!.entries) e.toJson()]));
+  Future<void> _saveLog(_Member m, String circle) async {
+    final f = File(circle == m.spec.circleId ? '${m.dir}/log.json' : '${m.dir}/log-$circle.json');
+    await File('${f.path}.tmp').writeAsString(jsonEncode([for (final e in m.logs[circle]!.entries) e.toJson()]));
     await File('${f.path}.tmp').rename(f.path);
   }
 
@@ -721,7 +756,7 @@ class ChainWorker {
     ];
     final waiting = m.node.waiting.any((t) => t.type == TxType.declare && t.from == m.pubkey);
     if (missing.isNotEmpty && !waiting) {
-      m.node.submit(TxType.declare, {'circle': m.spec.circleId, 'partitions': missing..sort()});
+      m.node.submit(TxType.declare, {'circle': m.keepCircle, 'partitions': missing..sort()});
     }
   }
 
@@ -770,7 +805,7 @@ class ChainWorker {
   Map<String, Object?> _state(_Member m) {
     final s = m.node.state;
     final params = m.spec.params;
-    final circle = s.circles[m.spec.circleId];
+    final circle = s.circles[m.keepCircle];
     final declared = s.declarations[m.pubkey] ?? const {};
     final proven = s.provenOn[m.pubkey] ?? const {};
     final copies = <int, int>{};
@@ -779,7 +814,7 @@ class ChainWorker {
         copies[p] = (copies[p] ?? 0) + 1;
       }
     }
-    final table = m.log?.payouts;
+    final table = m.logs[m.keepCircle]?.payouts;
     final dayStart = s.genesisTick + s.day * params.dayTicks;
     return {
       'spec': m.spec.hash,
@@ -799,7 +834,25 @@ class ChainWorker {
       'mining': m.miningWanted,
       'paused': _paused(m),
       'standing': s.standing[m.pubkey] ?? 0,
-      'syncScore': s.syncScores[m.spec.circleId]?[m.pubkey] ?? 0,
+      'syncScore': s.syncScores[m.keepCircle]?[m.pubkey] ?? 0,
+      'keepCircle': m.keepCircle,
+      // Every circle on the chain, with this member's part in it.
+      'circles': [
+        for (final e in s.circles.raw.entries)
+          {
+            'id': e.key,
+            'name': e.value.name,
+            'pool': e.value.pool,
+            'admin': e.value.admin == m.pubkey,
+            'moderator': e.value.moderators.contains(m.pubkey),
+            'moderators': e.value.moderators.length,
+            'live': s.isLive(e.key, s.tick),
+            'keeping': m.keepCircle == e.key,
+            'claimed': e.value.claimed[m.pubkey] ?? 0,
+            'owed': m.logs[e.key]?.payouts[m.pubkey],
+          },
+      ],
+      'circleFee': params.circleFee,
       'corpus': {
         'ready': m.corpus != null,
         'building': m.buildingCorpus,
@@ -839,8 +892,8 @@ class ChainWorker {
   /// How the circle is read, for this profile's server and its own reading:
   /// the allowance, who counts as a member, the open passes, and ours.
   Map<String, Object?> _reading(_Member m, ChainState s) {
-    final circle = s.circles[m.spec.circleId]!;
-    final scores = s.syncScores[m.spec.circleId] ?? const <String, int>{};
+    final circle = s.circles[m.keepCircle]!;
+    final scores = s.syncScores[m.keepCircle] ?? const <String, int>{};
     return {
       'passPrice': circle.passPrice,
       // Until the circle anchors its settings, the log's default.
@@ -852,7 +905,7 @@ class ChainWorker {
       ],
       'passes': {
         for (final e in s.passes.raw.entries)
-          if (e.value.circle == m.spec.circleId && e.value.activeAt(s.tick)) e.key: e.value.reader,
+          if (e.value.circle == m.keepCircle && e.value.activeAt(s.tick)) e.key: e.value.reader,
       },
       'myPass': [
         for (final e in s.passes.raw.entries)
@@ -869,35 +922,30 @@ class ChainWorker {
   /// The admin splits what the pool earned since the last payout by the
   /// circle's policy: keepers by sync score, the corpus's contributor, and
   /// the admin and moderators.
-  Future<Map<String, Object?>> _payout(_Member m) async {
-    final log = m.log;
+  Future<Map<String, Object?>> _payout(_Member m, String circleId) async {
+    final log = m.logs[circleId];
     if (log == null || log.admin != m.pubkey) return {'error': 'Only the circle\'s admin pays out its pool.'};
     final s = m.node.state;
-    final circle = s.circles[m.spec.circleId]!;
+    final circle = s.circles[circleId]!;
     final owed = log.payouts.values.fold<int>(0, (a, b) => a + b) - circle.claimed.values.fold<int>(0, (a, b) => a + b);
     final free = circle.pool - owed;
     if (free <= 0) return {'error': 'Nothing new in the pool to pay out.'};
-    final scores = s.syncScores[m.spec.circleId] ?? const {};
+    final scores = s.syncScores[circleId] ?? const <String, int>{};
     final totals = distribute(free, log.policy.payoutShares, {
       'keepers': Map.of(scores),
       'contributors': {m.spec.corpusOwner: 1},
       'moderators': {log.admin: 1, for (final k in log.moderators) k: 1},
     }, log.payouts);
     await log.writeWith(m.signer, LogType.payout, {'table': totals});
-    await _saveLog(m);
+    await _saveLog(m, circleId);
     return {'paidOut': free};
   }
 
   /// A member claims what the anchored payout table owes it.
-  Future<Map<String, Object?>> _claim(_Member m) async {
-    final r = await _claimBody(
-      m.spec,
-      m.node.state.circles[m.spec.circleId]!,
-      m.pubkey,
-      m.log,
-      m.address,
-      m.founderAddress,
-    );
+  Future<Map<String, Object?>> _claim(_Member m, String circleId) async {
+    final circle = m.node.state.circles[circleId];
+    if (circle == null) return {'error': 'No such circle on the chain.'};
+    final r = await _claimBody(m.spec, circleId, circle, m.pubkey, m.logs[circleId], m.address, m.founderAddress);
     if (r['body'] case final Map body) {
       await m.node.submit(TxType.claim, body.cast<String, Object?>());
       return {'claimed': r['owed']};
@@ -905,10 +953,36 @@ class ChainWorker {
     return r;
   }
 
+  /// Creates a circle on the chain (the fee is burned) and its log, run by
+  /// this member as admin and moderator, listing the test network's files
+  /// so its keepers can earn. The node anchors it by itself.
+  Future<Map<String, Object?>> _createCircle(_Member m, String id, String name) async {
+    final s = m.node.state;
+    if (!RegExp(r'^[a-z0-9][a-z0-9-]{2,62}$').hasMatch(id)) {
+      return {'error': 'A circle id is 3 to 63 lowercase letters, digits or dashes.'};
+    }
+    if (s.circles.containsKey(id)) return {'error': 'A circle with that id exists.'};
+    if (s.balanceOf(m.pubkey) < m.spec.params.circleFee) {
+      return {'error': 'Creating a circle burns ${m.spec.params.circleFee ~/ ChainParams.grainsPerMarca} marcas.'};
+    }
+    final log = CircleLog(id, admin: m.pubkey);
+    await log.writeWith(m.signer, LogType.appoint, {'key': m.pubkey});
+    await log.writeWith(m.signer, LogType.collection, {
+      'id': '$id-files',
+      'partitions': [for (var i = 0; i < m.spec.partitionSizes.length; i++) i],
+      'root': m.spec.corpusRoot,
+    });
+    m.logs[id] = log;
+    await _saveLog(m, id);
+    await m.node.submit(TxType.createCircle, {'circle': id, 'name': name.trim().isEmpty ? id : name.trim()});
+    return {};
+  }
+
   /// A claim of what the anchored payout table owes [me] in [circle]: the
   /// log comes from [log] when it is ours, else from the founder.
   Future<Map<String, Object?>> _claimBody(
     TestnetSpec spec,
+    String circleId,
     CircleState circle,
     String me,
     CircleLog? log,
@@ -918,12 +992,15 @@ class ChainWorker {
     if (circle.logHead.isEmpty || circle.payoutRoot.isEmpty) return {'error': 'The circle has not paid out yet.'};
     if (log == null || log.head != circle.logHead) {
       // The anchored log, from the founder, replayed up to the anchor.
-      if (founderAddress == null) return {'error': 'The founder\'s address is unknown.'};
-      final reply = await _ask(address, founderAddress, {'t': 'getLog'});
+      // From where the circle's anchor says, or the founder's for the
+      // genesis circle.
+      final at = circle.logAt.isNotEmpty ? circle.logAt : founderAddress;
+      if (at == null) return {'error': 'Nobody is known to hold the circle\'s log.'};
+      final reply = await _ask(address, at, {'t': 'getLog', 'circle': circleId});
       final entries = [for (final e in reply['entries'] as List) LogEntry.fromJson(e as Map)];
       final upTo = entries.indexWhere((e) => e.id == circle.logHead);
       if (upTo < 0) return {'error': 'The circle\'s log does not reach its anchor yet.'};
-      log = CircleLog.replay(spec.circleId, spec.founder, entries.take(upTo + 1));
+      log = CircleLog.replay(circleId, entries.first.author, entries.take(upTo + 1));
     }
     final table = log.payoutTable();
     if (toHex(table.root) != circle.payoutRoot) {

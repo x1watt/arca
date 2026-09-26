@@ -86,6 +86,24 @@ class _DetailState extends State<_Detail> {
       appBar: AppBar(
         title: Text(file.name, overflow: TextOverflow.ellipsis),
         actions: [
+          ValueListenableBuilder(
+            valueListenable: Core.instance.state,
+            builder: (context, state, _) {
+              final liked = state?.liked.contains(file.sha256) ?? false;
+              return IconButton(
+                tooltip: liked ? 'Unlike' : 'Like and share',
+                isSelected: liked,
+                icon: const Icon(Icons.thumb_up_outlined),
+                selectedIcon: const Icon(Icons.thumb_up),
+                onPressed: () async {
+                  final error = await Core.instance.like(file.sha256, !liked);
+                  if (context.mounted && error != null) {
+                    showMessage(context, error);
+                  }
+                },
+              );
+            },
+          ),
           IconButton(
             tooltip: 'Edit details',
             icon: const Icon(Icons.edit_note),

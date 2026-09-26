@@ -28,6 +28,8 @@ List<Color> paletteFor(String key) =>
 void openFile(BuildContext context, FileView file) {
   // Videos start loading now, while the page slides in.
   if (Playback.plays(file)) Playback.instance.prepare(file);
+  // For History; kept on this device only.
+  Core.instance.rememberOpened(file);
   Navigator.of(
     context,
   ).push(MaterialPageRoute<void>(builder: (_) => FileDetailScreen(file: file)));
@@ -348,6 +350,9 @@ class _NewCollectionDialogState extends State<_NewCollectionDialog> {
   final _name = TextEditingController();
   final _description = TextEditingController();
   String? _folder;
+
+  /// The storage folder a new empty collection goes in (null: the default).
+  String? _base;
   String? _error;
   bool _busy = false;
 
@@ -388,6 +393,7 @@ class _NewCollectionDialogState extends State<_NewCollectionDialog> {
       _name.text,
       _description.text,
       folder: _folder,
+      base: _base,
     );
     if (!mounted) return;
     if (error != null) {
@@ -403,8 +409,11 @@ class _NewCollectionDialogState extends State<_NewCollectionDialog> {
   @override
   Widget build(BuildContext context) {
     final state = Core.instance.state.value;
+    final storage = state?.storage ?? const <StorageFolder>[];
     final base =
-        state?.storage.where((s) => s.isDefault).firstOrNull?.path ?? '';
+        _base ?? storage.where((s) => s.isDefault).firstOrNull?.path ?? '';
+    // Settings, "Ask where to store each new collection".
+    final ask = (state?.askFolder ?? false) && storage.length > 1;
     final theme = Theme.of(context);
     return AlertDialog(
       title: const Text('New collection'),
@@ -457,6 +466,27 @@ class _NewCollectionDialogState extends State<_NewCollectionDialog> {
                       style: const TextStyle(fontFamily: 'monospace'),
                     ),
                   ),
+                  if (ask && _folder == null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16, bottom: 8),
+                      child: DropdownButton<String>(
+                        isExpanded: true,
+                        value: base,
+                        items: [
+                          for (final f in storage)
+                            DropdownMenuItem(
+                              value: f.path,
+                              child: Text(
+                                f.free == null
+                                    ? f.path
+                                    : '${f.path} (${formatBytes(f.free!)} free)',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _base = v),
+                      ),
+                    ),
                   RadioListTile<bool>(
                     contentPadding: EdgeInsets.zero,
                     value: false,
