@@ -23,6 +23,7 @@ import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
+import 'rewards.dart' show settleBudget, settleOne;
 import 'signer.dart';
 import 'state.dart';
 import 'tx.dart';
@@ -43,7 +44,13 @@ class Block {
     required this.traceRoot,
     required this.trace,
     this.headerTxCount,
+    this.settleSteps = 0,
   });
+
+  /// Settlement steps between the prelude and the transactions, each its
+  /// own trace entry (rewards.dart): the trace is the prelude, these steps,
+  /// then one entry per transaction.
+  final int settleSteps;
 
   /// For a block known only by its header (a checkpoint): how many
   /// transactions the header names, so its hash stays the same.
@@ -85,6 +92,7 @@ class Block {
     'target': target.toRadixString(16),
     'txRoot': txRoot,
     'txCount': headerTxCount ?? txs.length,
+    'settleSteps': settleSteps,
     'stateRoot': stateRoot,
     'traceRoot': traceRoot,
     'corpusRoot': corpusRoot,
@@ -144,6 +152,10 @@ class Block {
       if (next.declarations[producer]?[p.partition] != p.circle) {
         throw const ChainError('the producer did not declare that partition');
       }
+      // A keeper that missed a holding proof may still make blocks: the
+      // mining proof shows it reads its packed copy now, and blocks earn
+      // nothing. Otherwise a chain whose keepers all missed a day could
+      // never include their new declarations.
       final challenge = mineChallenge(state.head, tick);
       final why = await p.check(params, challenge, state.corpusRoot, state.partitionSizes);
       if (why != null) throw ChainError('bad mining proof: $why');
@@ -169,7 +181,7 @@ class Block {
   /// The state after the prelude and [txs]; with [strict] a bad transaction
   /// fails the whole block, otherwise it is left out (when producing).
   /// Returns the state, the included transactions and the trace.
-  static Future<(ChainState, List<Tx>, List<Uint8List>)> _transition(
+  static Future<(ChainState, List<Tx>, List<Uint8List>, int)> _transition(
     ChainState state,
     int tick,
     String producer,
@@ -179,6 +191,12 @@ class Block {
   }) async {
     var result = await prelude(state, tick, producer, proof);
     final trace = [result.root()];
+    // The block's share of settling the days that ended, one trace entry
+    // per step so each can be shown wrong on its own (rewards.dart).
+    var settled = 0;
+    for (var budget = settleBudget(result); settled < budget && settleOne(result); settled++) {
+      trace.add(result.root());
+    }
     final included = <Tx>[];
     for (final t in txs) {
       if (strict) {
@@ -197,7 +215,7 @@ class Block {
       included.add(t);
       trace.add(result.root());
     }
-    return (result, included, trace);
+    return (result, included, trace, settled);
   }
 
   /// Builds and signs the next block on [state]. Invalid transactions are
@@ -219,7 +237,7 @@ class Block {
     Map<String, Object?> proof = const {},
   }) async {
     final producer = signer.publicKey;
-    final (next, included, trace) = await _transition(state, tick, producer, proof, txs, strict: false);
+    final (_, included, trace, settled) = await _transition(state, tick, producer, proof, txs, strict: false);
     final unsigned = Block(
       height: state.height + 1,
       prev: state.head,
@@ -234,6 +252,7 @@ class Block {
       target: state.target,
       traceRoot: traceRootOf(trace),
       trace: [for (final r in trace) toHex(r)],
+      settleSteps: settled,
     );
     return unsigned._withSig(toHex(await signer.sign(_headerBytes(unsigned.header))));
   }
@@ -255,6 +274,8 @@ class Block {
     target: target,
     traceRoot: traceRoot,
     trace: trace,
+    headerTxCount: headerTxCount,
+    settleSteps: settleSteps,
   );
 
   /// Applies this block to [state] and returns the new state, or throws
@@ -266,10 +287,11 @@ class Block {
     if (target != state.target) throw const ChainError('not the target of the chain');
     if (!signed) throw const ChainError('bad producer signature');
     if (txsRoot(txs) != txRoot) throw const ChainError('transactions do not match the header');
-    if (trace.length != txs.length + 1 || traceRootOf([for (final r in trace) fromHex(r)]) != traceRoot) {
+    if (trace.length != 1 + settleSteps + txs.length || traceRootOf([for (final r in trace) fromHex(r)]) != traceRoot) {
       throw const ChainError('the trace does not match the header');
     }
-    final (next, _, mine) = await _transition(state, tick, producer, proof, txs, strict: true);
+    final (next, _, mine, settled) = await _transition(state, tick, producer, proof, txs, strict: true);
+    if (settled != settleSteps) throw const ChainError('not the settlement steps the chain asks for');
     for (var i = 0; i < mine.length; i++) {
       if (toHex(mine[i]) != trace[i]) throw ChainError('step $i of the trace is wrong');
     }
@@ -292,6 +314,7 @@ class Block {
     'target': target.toRadixString(16),
     'traceRoot': traceRoot,
     'trace': trace,
+    'settleSteps': settleSteps,
     'headerTxCount': ?headerTxCount,
   };
 
@@ -310,5 +333,6 @@ class Block {
     traceRoot: m['traceRoot'] as String,
     trace: (m['trace'] as List).cast<String>(),
     headerTxCount: m['headerTxCount'] as int?,
+    settleSteps: m['settleSteps'] as int? ?? 0,
   );
 }

@@ -16,6 +16,7 @@ import 'package:arca_core/src/chain/light.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/node.dart';
 import 'package:arca_core/src/chain/params.dart';
+import 'package:arca_core/src/chain/rewards.dart' show standingOf;
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:arca_core/src/chain/wire.dart';
@@ -198,7 +199,7 @@ Future<void> main(List<String> args) async {
   for (var i = 0; i < 3; i++) {
     say(
       'keeper ${'abc'[i]} declared: ${s.declarations[nodes[i].key] ?? 'dropped'}, '
-      'last proof on day ${s.provenOn[nodes[i].key]?[i]}, standing ${(s.standing[nodes[i].key] ?? 0) / ChainParams.grainsPerMarca}',
+      'last proof on day ${s.provenOn[nodes[i].key]?[i]}, standing ${standingOf(s, nodes[i].key).$2 / ChainParams.grainsPerMarca}',
     );
   }
   final pool = s.circles['commons']!.pool / live.issuanceOn(0);

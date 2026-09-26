@@ -36,6 +36,7 @@ import 'state.dart';
 import 'mining.dart';
 import 'node.dart';
 import 'params.dart';
+import 'rewards.dart' show lapsed, standingOf, syncScoreOf;
 import 'testnet.dart';
 import 'tx.dart';
 import 'wire.dart';
@@ -562,14 +563,15 @@ class ChainWorker {
     final nonces = await m.light.read('nonces', [me], at: at);
     final circles = await m.light.read('circles', [m.spec.circleId], at: at);
     final standing = await m.light.read('standing', [me], at: at);
-    final sync = await m.light.read('sync', [m.spec.circleId], at: at);
+    final sync = await m.light.read('sync', ['${m.spec.circleId} $me'], at: at);
     m.balance = int.tryParse(balances[me]?.value ?? '') ?? 0;
     m.nonce = int.tryParse(nonces[me]?.value ?? '') ?? 0;
     final c = circles[m.spec.circleId]?.value;
     m.circle = c == null ? null : CircleState.fromJson(jsonDecode(c) as Map);
-    m.standing = int.tryParse(standing[me]?.value ?? '') ?? 0;
-    final scores = sync[m.spec.circleId]?.value;
-    m.syncScore = scores == null ? 0 : ((jsonDecode(scores) as Map)[me] as int? ?? 0);
+    final st = standing[me]?.value;
+    m.standing = st == null ? 0 : (jsonDecode(st) as List)[1] as int;
+    final sc = sync['${m.spec.circleId} $me']?.value;
+    m.syncScore = sc == null ? 0 : (jsonDecode(sc) as List)[1] as int;
     m.pending.removeWhere((t) => TxType.numbered(t.type) && t.nonce < m.nonce);
   }
 
@@ -749,7 +751,11 @@ class ChainWorker {
         m.packed.add(p);
       }
     }
-    final declared = m.node.state.declarations[m.pubkey] ?? const {};
+    final st = m.node.state;
+    // A keeper that missed a day (the device was off) declares everything
+    // it keeps again, which starts it over.
+    final restart = lapsed(st, m.pubkey, st.day);
+    final declared = restart ? const <int, String>{} : st.declarations[m.pubkey] ?? const {};
     final missing = [
       for (final p in m.keep)
         if (m.packed.contains(p) && !declared.containsKey(p)) p,
@@ -833,8 +839,8 @@ class ChainWorker {
       'pending': m.node.waiting.where((t) => t.from == m.pubkey).length,
       'mining': m.miningWanted,
       'paused': _paused(m),
-      'standing': s.standing[m.pubkey] ?? 0,
-      'syncScore': s.syncScores[m.keepCircle]?[m.pubkey] ?? 0,
+      'standing': standingOf(s, m.pubkey).$2,
+      'syncScore': syncScoreOf(s, m.keepCircle, m.pubkey, s.day),
       'keepCircle': m.keepCircle,
       // Every circle on the chain, with this member's part in it.
       'circles': [
@@ -893,7 +899,7 @@ class ChainWorker {
   /// the allowance, who counts as a member, the open passes, and ours.
   Map<String, Object?> _reading(_Member m, ChainState s) {
     final circle = s.circles[m.keepCircle]!;
-    final scores = s.syncScores[m.keepCircle] ?? const <String, int>{};
+    final scores = _scoresOf(s, m.keepCircle);
     return {
       'passPrice': circle.passPrice,
       // Until the circle anchors its settings, the log's default.
@@ -919,6 +925,16 @@ class ChainWorker {
     };
   }
 
+  /// Every member's sync score in [circle] as of today (a full node reads
+  /// them all; nothing here needs proving).
+  static Map<String, int> _scoresOf(ChainState s, String circle) {
+    final prefix = '$circle ';
+    return {
+      for (final k in s.syncScores.raw.keys)
+        if (k.startsWith(prefix)) k.substring(prefix.length): syncScoreOf(s, circle, k.substring(prefix.length), s.day),
+    }..removeWhere((_, v) => v <= 0);
+  }
+
   /// The admin splits what the pool earned since the last payout by the
   /// circle's policy: keepers by sync score, the corpus's contributor, and
   /// the admin and moderators.
@@ -930,7 +946,7 @@ class ChainWorker {
     final owed = log.payouts.values.fold<int>(0, (a, b) => a + b) - circle.claimed.values.fold<int>(0, (a, b) => a + b);
     final free = circle.pool - owed;
     if (free <= 0) return {'error': 'Nothing new in the pool to pay out.'};
-    final scores = s.syncScores[circleId] ?? const <String, int>{};
+    final scores = _scoresOf(s, circleId);
     final totals = distribute(free, log.policy.payoutShares, {
       'keepers': Map.of(scores),
       'contributors': {m.spec.corpusOwner: 1},

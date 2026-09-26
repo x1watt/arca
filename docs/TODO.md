@@ -20,9 +20,11 @@ Everything the app shows must be real (architecture, status paragraph: "The UI s
 - [x] Menu: "Help". A page that explains Arca in plain words: profiles and addresses, collections and copies, suggestions and moderators, the test network and marcas.
 - [x] Advanced search: similar-file matching (TLSH, PDQ) is announced as "not built yet". The note stays; the feature is listed under Later.
 
-## 2. Settle a day in steps that can each be proven small
+## 2. Settle a day in steps that can each be proven small (done)
 
 A wrong day's settlement is proven with the whole of several namespaces (about 1.5 KB per keeper; `docs/architecture.md` 10). Keep running totals through the day as holding proofs arrive (provers per partition, storage weight, collection keepers and interest), so settling one keeper needs only its own entries and the totals, and settle keepers in bounded batches over the next day's first blocks. Rewards must come out as they do now (`test/chain_rewards_test.dart`), and every settlement step must have a small fraud proof.
+
+Done: running totals in the `tally` namespace, one trace entry per settlement step, lazy lapses. A wrong step is proven with about 13 KB with 400 keepers (was 600 KB). The reward tests pass unchanged in their numbers; two rules moved slightly (pass-on divides by the collections kept the day before; a keeper that missed a day is caught when it next acts, and may still mine).
 
 ## 3. Harden I2P and the network
 

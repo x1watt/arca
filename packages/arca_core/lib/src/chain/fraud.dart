@@ -30,6 +30,7 @@ import '../crypto/hex.dart';
 import 'block.dart';
 import 'merkle.dart';
 import 'params.dart';
+import 'rewards.dart' show settleOne;
 import 'smt.dart';
 import 'state.dart';
 import 'state_map.dart';
@@ -62,6 +63,7 @@ class Header {
   BigInt get target => BigInt.parse(fields['target'] as String, radix: 16);
   String get txRoot => fields['txRoot'] as String;
   int get txCount => fields['txCount'] as int;
+  int get settleSteps => fields['settleSteps'] as int? ?? 0;
   String get stateRoot => fields['stateRoot'] as String;
   String get traceRoot => fields['traceRoot'] as String;
   String get corpusRoot => fields['corpusRoot'] as String;
@@ -86,6 +88,7 @@ class Header {
     traceRoot: traceRoot,
     trace: const [],
     headerTxCount: txCount,
+    settleSteps: settleSteps,
   );
 
   /// The block hash (the header's, transactions are behind [txRoot]).
@@ -121,7 +124,7 @@ class FraudProof {
     final base = {'block': header.toJson(), if (parentHeader != null) 'parent': parentHeader.toJson()};
     final traceLeaves = [for (final r in block.trace) leafHash(fromHex(r))];
     if (block.trace.isEmpty || block.trace.last != block.stateRoot) {
-      final last = block.txs.length;
+      final last = block.settleSteps + block.txs.length;
       if (last < block.trace.length) {
         return FraudProof({
           ...base,
@@ -135,7 +138,8 @@ class FraudProof {
     var state = parent;
     // What the parent committed: its head as ''.
     final committedParent = parent.copy()..head = '';
-    for (var step = 0; step <= block.txs.length; step++) {
+    final settle = block.settleSteps;
+    for (var step = 0; step <= settle + block.txs.length; step++) {
       final committed = step == 0 ? committedParent : state;
       final pre = state.copy()..track();
       Object? broke;
@@ -144,9 +148,12 @@ class FraudProof {
         if (step == 0) {
           if (block.target != pre.target) throw const ChainError('not the target of the chain');
           post = await Block.prelude(pre, block.tick, block.producer, block.proof);
+        } else if (step <= settle) {
+          post = pre.copy();
+          if (!settleOne(post)) throw const ChainError('a settlement step with nothing to settle');
         } else {
           post = pre.copy();
-          await post.apply(block.txs[step - 1]);
+          await post.apply(block.txs[step - settle - 1]);
         }
       } on ChainError catch (e) {
         broke = e;
@@ -161,8 +168,9 @@ class FraudProof {
           'step': step,
           'preRoots': [for (final r in committed.namespaceRoots()) toHex(r)],
           if (step > 0) 'prePath': _path(merkleProof(traceLeaves, step - 1)),
-          if (step > 0) 'tx': block.txs[step - 1].toJson(),
-          if (step > 0) 'txPath': _path(merkleProof([for (final t in block.txs) leafHash(fromHex(t.id))], step - 1)),
+          if (step > settle) 'tx': block.txs[step - settle - 1].toJson(),
+          if (step > settle)
+            'txPath': _path(merkleProof([for (final t in block.txs) leafHash(fromHex(t.id))], step - settle - 1)),
           'postLeaf': claimed,
           'postPath': _path(merkleProof(traceLeaves, step)),
           'witness': _witness(committed, touched),
@@ -199,7 +207,8 @@ class FraudProof {
   Future<void> verify(ChainParams params, {required String genesisRoot}) async {
     final b = block;
     if (!b.signed) throw const FraudError('the block header is not signed by its producer');
-    final steps = b.txCount + 1;
+    final settle = b.settleSteps;
+    final steps = b.txCount + settle + 1;
     Uint8List traceAt(int i, Object? path, String what) {
       final leaf = json[what] as String?;
       final root = leaf == null ? null : merkleClimb(leafHash(fromHex(leaf)), i, steps, _pathOf(path));
@@ -209,7 +218,7 @@ class FraudProof {
 
     switch (json['kind']) {
       case 'end':
-        final root = merkleClimb(leafHash(fromHex(json['leaf'] as String)), b.txCount, steps, _pathOf(json['path']));
+        final root = merkleClimb(leafHash(fromHex(json['leaf'] as String)), steps - 1, steps, _pathOf(json['path']));
         if (root == null || toHex(root) != b.traceRoot) throw const FraudError('not the last trace entry');
         if (json['leaf'] == b.stateRoot) throw const FraudError('the trace ends at the state root');
         return;
@@ -297,9 +306,12 @@ class FraudProof {
       if (step == 0) {
         if (b.target != state.target) return; // the header lies about the target
         after = await Block.prelude(state, b.tick, b.producer, b.proof);
+      } else if (step <= settle) {
+        after = state.copy();
+        if (!settleOne(after)) return; // the header claims a step there is no work for
       } else {
         final tx = Tx.fromJson(json['tx'] as Map);
-        final inBlock = merkleClimb(leafHash(fromHex(tx.id)), step - 1, b.txCount, _pathOf(json['txPath']));
+        final inBlock = merkleClimb(leafHash(fromHex(tx.id)), step - settle - 1, b.txCount, _pathOf(json['txPath']));
         if (inBlock == null || toHex(inBlock) != b.txRoot) {
           throw const FraudError('the transaction is not in the block');
         }

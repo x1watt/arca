@@ -166,6 +166,7 @@ class LightClient {
     'target': b['target'],
     'txRoot': b['txRoot'],
     'txCount': (b['txs'] as List).length,
+    'settleSteps': b['settleSteps'] ?? 0,
     'stateRoot': b['stateRoot'],
     'traceRoot': b['traceRoot'],
     'corpusRoot': b['corpusRoot'],

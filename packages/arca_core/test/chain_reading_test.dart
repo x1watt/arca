@@ -9,11 +9,22 @@ import 'package:arca_core/src/chain/tx.dart';
 import 'package:test/test.dart';
 
 import 'chain_rewards_test.dart' show keep, proveAndClose, library;
+import 'package:arca_core/src/chain/rewards.dart';
 
 const p = ChainParams.testnet;
 const m = ChainParams.grainsPerMarca;
 String pk(List<int> k) => toHex(publicKeyOf(k));
 Matcher throwsRule(String text) => throwsA(predicate((e) => '$e'.contains(text), 'error containing "$text"'));
+
+/// Moves [s] to the day that holds [tick] and runs a settlement step, as
+/// the first block of that day would (passes close as a day starts).
+void settleAt(ChainState s, int tick) {
+  s.startDay(s.dayOf(tick));
+  settleStep(s);
+}
+
+/// The first tick of the day a pass ending at [expires] closes on.
+int closeTick(ChainState s, int expires) => s.genesisTick + passCloseDay(s, expires) * s.params.dayTicks;
 
 void main() {
   final admin = generateSecretKey(), reader = generateSecretKey();
@@ -61,20 +72,22 @@ void main() {
     await s.apply(Tx.sign(s2, TxType.settlePass, 0, Receipt.sign(reader, pass, pk(s2), 1000).settleBody()));
 
     final burnedBefore = s.burned;
-    closePasses(s, s.tick + p.passSettleTicks - 1);
+    final closes = closeTick(s, s.passes[pass]!.expires);
+    settleAt(s, closes - 1);
     expect(s.passes, contains(pass), reason: 'the settlement window is still open');
-    closePasses(s, s.tick + p.passSettleTicks);
+    settleAt(s, closes);
     expect(s.passes, isEmpty);
     expect(s.balanceOf(pk(s1)), 3.75 * m, reason: 'three quarters of the servers\' half');
     expect(s.balanceOf(pk(s2)), 1.25 * m);
     expect(s.burned - burnedBefore, 5 * m);
-    expect(s.burnsFor['tapes'], {0: 5 * m}, reason: 'an outsider\'s burn raises the collection\'s interest');
+    expect(s.burnsFor['tapes']!.values.single, 5 * m, reason: 'an outsider\'s burn raises the collection\'s interest');
   });
 
   test('a pass nobody served returns the servers\' half; the burn stays', () async {
     final s = await circleSellingPasses();
-    await s.apply(Tx.sign(reader, TxType.buyPass, 0, {'circle': 'radio'}));
-    closePasses(s, s.tick + p.passTicks + p.passSettleTicks);
+    final buy = Tx.sign(reader, TxType.buyPass, 0, {'circle': 'radio'});
+    await s.apply(buy);
+    settleAt(s, closeTick(s, s.passes[buy.id]!.expires));
     expect(s.balanceOf(pk(reader)), 95 * m);
     expect(s.burnsFor, isEmpty, reason: 'the pass named no collection');
   });
@@ -98,7 +111,7 @@ void main() {
     await s.apply(buy);
     s.tick += p.passTicks;
     await s.apply(Tx.sign(admin, TxType.settlePass, 2, Receipt.sign(admin, buy.id, pk(admin), 1 << 30).settleBody()));
-    closePasses(s, s.tick + p.passSettleTicks);
+    settleAt(s, closeTick(s, s.passes[buy.id]!.expires));
     expect(s.balanceOf(pk(admin)), 95 * m);
     expect(s.burnsFor, isEmpty, reason: 'a member\'s burn is no sign of outside interest');
   });
@@ -117,19 +130,23 @@ void main() {
     }
     keep(s, 'rare', 'radio', [1]);
     proveAndClose(s);
-    final scores = s.syncScores['radio']!;
-    expect(scores['common0'], 100 * 10 ~/ 5);
-    expect(scores['rare'], 100 * 10 + 100 * 10 ~/ 2, reason: 'rare partition, plus the whole collection');
-    final before = scores['rare']!;
+    int score(String key) => syncScoreOf(s, 'radio', key, s.day - 1);
+    expect(score('common0'), 100 * 10 ~/ 5);
+    expect(score('rare'), 100 * 10 + 100 * 10 ~/ 2, reason: 'rare partition, plus the whole collection');
+    final before = score('rare');
     // One day not kept, one kept again.
-    s.declarations.remove('rare');
+    final kept = s.declarations.remove('rare');
     proveAndClose(s);
-    expect(s.syncScores['radio']!['rare'], before - before ~/ 7);
-    keep(s, 'rare', 'radio', [1]);
+    expect(score('rare'), before - before ~/ 7);
+    s.declarations['rare'] = kept!;
     proveAndClose(s);
-    expect(s.syncScores['radio']!['rare'], greaterThan(before));
-    s.provenOn.remove('rare');
+    expect(score('rare'), greaterThan(before));
+    // A missed proof: the keeper may not prove again, and declaring again
+    // drops its score.
     s.startDay(s.day + 1);
-    expect(s.syncScores['radio']?['rare'], isNull, reason: 'a missed proof resets the score');
+    s.startDay(s.day + 1);
+    expect(lapsed(s, 'rare', s.day), isTrue);
+    dropKeeper(s, 'rare');
+    expect(score('rare'), 0, reason: 'a missed proof resets the score');
   });
 }

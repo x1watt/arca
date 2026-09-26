@@ -9,6 +9,7 @@ import 'package:arca_core/src/chain/fraud.dart';
 import 'package:arca_core/src/chain/light.dart';
 import 'package:arca_core/src/chain/node.dart';
 import 'package:arca_core/src/chain/params.dart';
+import 'package:arca_core/src/chain/rewards.dart' show recordProof;
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:arca_core/src/chain/wire.dart';
@@ -132,45 +133,57 @@ void main() {
     await light.stop();
   }, timeout: const Timeout(Duration(minutes: 1)));
 
-  test('a fraud proof for a day\'s settlement travels in parts and still holds', () async {
-    // Many keepers make the settlement's namespaces big.
+  test('a fraud proof for a day\'s settlement stays small however many keepers there are', () async {
     final rng = Random(7);
-    final genesis = ChainState.genesis(
-      p,
-      circles: {'commons': CircleState(admin: 'a' * 64, name: 'C')},
-    );
-    for (var i = 0; i < 400; i++) {
-      final k = toHex(List.generate(32, (_) => rng.nextInt(256)));
-      genesis.declarations[k] = {0: 'commons'};
-      genesis.declaredOn[k] = {0: 0};
-      genesis.keepers++;
+    Future<int> proofBytes(int keepers) async {
+      final genesis = ChainState.genesis(
+        p,
+        circles: {'commons': CircleState(admin: 'a' * 64, name: 'C')},
+        collections: {
+          'files': CollectionState(circle: 'commons', partitions: [0], seed: 100 * m),
+        },
+        partitionSizes: [4],
+      );
+      for (var i = 0; i < keepers; i++) {
+        final k = toHex(List.generate(32, (_) => rng.nextInt(256)));
+        genesis.declarations[k] = {0: 'commons'};
+        genesis.declaredOn[k] = {0: 0};
+        genesis.keepers++;
+        recordProof(genesis, k, 0, 'commons');
+      }
+      final producer = generateSecretKey();
+      final honest = await Block.produce(genesis, producer, const [], tick: p.dayTicks + 1);
+      final trace = [...honest.trace]..[1] = 'ab' * 32;
+      final bad = Block(
+        height: honest.height,
+        prev: honest.prev,
+        tick: honest.tick,
+        producer: honest.producer,
+        txs: const [],
+        txRoot: honest.txRoot,
+        stateRoot: trace.last,
+        corpusRoot: honest.corpusRoot,
+        proof: honest.proof,
+        sig: '',
+        target: honest.target,
+        traceRoot: Block.traceRootOf([for (final r in trace) fromHex(r)]),
+        trace: trace,
+        settleSteps: honest.settleSteps,
+      ).signedBy(producer);
+      final proof = (await FraudProof.build(genesis, null, bad))!;
+      expect(proof.json['step'], 1);
+      // It travels (in parts if need be) and holds.
+      final r = Reassembly();
+      Map? whole;
+      for (final part in Reassembly.split({'t': 'fraud', 'f': proof.json}).reversed) {
+        whole = r.add(Inbound('x', 'y', encodeChainMessage(part))) ?? whole;
+      }
+      await FraudProof((whole!['f'] as Map).cast<String, Object?>()).verify(p, genesisRoot: genesis.rootHex);
+      return canonicalJson(proof.json).length;
     }
-    final producer = generateSecretKey();
-    final honest = await Block.produce(genesis, producer, const [], tick: p.dayTicks + 1);
-    final bad = Block(
-      height: honest.height,
-      prev: honest.prev,
-      tick: honest.tick,
-      producer: honest.producer,
-      txs: const [],
-      txRoot: honest.txRoot,
-      stateRoot: 'ab' * 32,
-      corpusRoot: honest.corpusRoot,
-      proof: honest.proof,
-      sig: '',
-      target: honest.target,
-      traceRoot: Block.traceRootOf([fromHex('ab' * 32)]),
-      trace: ['ab' * 32],
-    ).signedBy(producer);
-    final proof = (await FraudProof.build(genesis, null, bad))!;
-    final parts = Reassembly.split({'t': 'fraud', 'f': proof.json});
-    expect(parts.length, greaterThan(1));
-    final r = Reassembly();
-    Map? whole;
-    for (final part in parts.reversed) {
-      whole = r.add(Inbound('x', 'y', encodeChainMessage(part))) ?? whole;
-    }
-    await FraudProof((whole!['f'] as Map).cast<String, Object?>()).verify(p, genesisRoot: genesis.rootHex);
-    print('settlement fraud proof with 400 keepers: ${parts.length} parts');
+
+    final small = await proofBytes(40), big = await proofBytes(400);
+    print('settlement fraud proof: $small bytes with 40 keepers, $big bytes with 400');
+    expect(big, lessThan(small * 2), reason: 'grows with the log of the keepers, not with their number');
   });
 }

@@ -104,30 +104,25 @@ class Receipt {
   Map<String, Object?> settleBody() => {'pass': pass, 'bytes': bytes, 'sig': sig};
 }
 
-/// Closes every pass whose settlement window ended by [tick]: burns half,
-/// pays the servers the other half by bytes. Called as each day starts.
-void closePasses(ChainState s, int tick) {
-  final done = [
-    for (final e in s.passes.entries)
-      if (tick >= e.value.expires + s.params.passSettleTicks) e.key,
-  ]..sort();
-  for (final id in done) {
-    final pass = s.passes.remove(id)!;
-    final burn = pass.price * ChainParams.passBurnPercent ~/ 100;
-    final toServers = pass.price - burn;
-    final total = pass.delivered.values.fold(0, (a, b) => a + b);
-    var paid = 0;
-    if (total > 0) {
-      for (final server in pass.delivered.keys.toList()..sort()) {
-        final share = (BigInt.from(toServers) * BigInt.from(pass.delivered[server]!) ~/ BigInt.from(total)).toInt();
-        s.balances[server] = s.balanceOf(server) + share;
-        paid += share;
-      }
-      s.burned += pass.price - paid; // the half, and what rounding left
-    } else {
-      s.burned += burn;
-      s.balances[pass.reader] = s.balanceOf(pass.reader) + toServers; // nobody served
+/// Closes pass [id] once its settlement window is over: burns half, pays
+/// the servers the other half by bytes (settlement queues it, rewards.dart).
+void closePass(ChainState s, String id) {
+  final pass = s.passes.remove(id);
+  if (pass == null) return;
+  final burn = pass.price * ChainParams.passBurnPercent ~/ 100;
+  final toServers = pass.price - burn;
+  final total = pass.delivered.values.fold(0, (a, b) => a + b);
+  var paid = 0;
+  if (total > 0) {
+    for (final server in pass.delivered.keys.toList()..sort()) {
+      final share = (BigInt.from(toServers) * BigInt.from(pass.delivered[server]!) ~/ BigInt.from(total)).toInt();
+      s.balances[server] = s.balanceOf(server) + share;
+      paid += share;
     }
-    s.burnedFor(pass.reader, pass.collection, burn);
+    s.burned += pass.price - paid; // the half, and what rounding left
+  } else {
+    s.burned += burn;
+    s.balances[pass.reader] = s.balanceOf(pass.reader) + toServers; // nobody served
   }
+  s.burnedFor(pass.reader, pass.collection, burn);
 }

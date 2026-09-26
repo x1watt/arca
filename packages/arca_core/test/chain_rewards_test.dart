@@ -1,7 +1,8 @@
 // A day's issuance (whitepaper, section 8): the storage and interest
-// budgets, the replication curve, standing and its 1.5x cap. Keeping is set
-// straight into the state (as if every holding proof had been posted), so
-// these tests run the settlement rules alone.
+// budgets, the replication curve, standing and its 1.5x cap. Declarations
+// are set straight into the state and proofs are counted with the same
+// call holding proofs make (as if every one had been posted and checked),
+// so these tests run the settlement rules alone.
 import 'package:arca_core/arca_core.dart';
 import 'package:arca_core/src/chain/params.dart';
 import 'package:arca_core/src/chain/rewards.dart';
@@ -35,18 +36,31 @@ void keep(ChainState s, String keeper, String circle, List<int> partitions) {
 }
 
 /// Everyone proves everything today; every circle anchored in time unless
-/// listed in [lapsed]; the day closes.
+/// listed in [lapsed]; the day closes and is settled completely (the blocks
+/// of the next day would do it a few keepers at a time).
 void proveAndClose(ChainState s, {Set<String> lapsed = const {}}) {
   for (final e in s.circles.entries) {
     if (!lapsed.contains(e.key)) e.value.anchoredAt = s.genesisTick + (s.day + 1) * p.dayTicks - 1;
   }
-  for (final e in s.declarations.entries) {
-    for (final q in e.value.keys) {
-      (s.provenOn[e.key] ??= {})[q] = s.day;
+  for (final e in s.declarations.raw.entries) {
+    for (final q in e.value.entries) {
+      (s.provenOn[e.key] ??= {})[q.key] = s.day;
+      recordProof(s, e.key, q.key, q.value);
     }
   }
   s.startDay(s.day + 1);
+  settleAll(s);
 }
+
+/// Runs settlement steps until nothing of past days is left.
+void settleAll(ChainState s) {
+  for (var i = 0; i < 10000 && s.settleFrom >= 0 && s.settleFrom < s.day; i++) {
+    settleStep(s);
+  }
+}
+
+/// Standing earned on the last settled day.
+int standing(ChainState s, String key) => standingOf(s, key).$2;
 
 int pool(ChainState s, String circle) => s.circles[circle]!.pool;
 
@@ -92,7 +106,8 @@ void main() {
     final interest = p.issuanceOn(0) * ChainParams.interestShare ~/ 100;
     expect(pool(s, 'junk'), closeTo(storage ~/ 2, 1), reason: 'storage only');
     expect(pool(s, 'x'), closeTo(storage ~/ 2 + interest, 2), reason: 'storage and all the interest');
-    expect(s.standing.keys, ['a']);
+    expect(standing(s, 'a'), greaterThan(0));
+    expect(standing(s, 'j'), 0, reason: 'keeping only its own archive earns no interest');
   });
 
   test('burns: only non-members raise interest, and only for 30 days; members burning gain nothing', () async {
@@ -119,11 +134,10 @@ void main() {
     keep(s, 'k', 'radio', [0]);
     for (var d = 0; d < ChainParams.interestWindowDays; d++) {
       proveAndClose(s);
-      expect(s.standing['k'], isNotNull, reason: 'day $d is inside the window');
+      expect(standing(s, 'k'), greaterThan(0), reason: 'day $d is inside the window');
     }
     proveAndClose(s);
-    expect(s.standing['k'], isNull, reason: 'after 30 days the burn no longer counts');
-    expect(s.burnsFor, isEmpty);
+    expect(standing(s, 'k'), 0, reason: 'after 30 days the burn no longer counts');
   });
 
   test('a circle that stopped anchoring earns nothing, and its collections earn no interest', () {
@@ -145,11 +159,11 @@ void main() {
     final wiki1 = pool(s, 'wiki');
     proveAndClose(s, lapsed: {'wiki'}); // day 2: x is back, wiki is cut off
     expect(pool(s, 'wiki'), wiki1, reason: 'wiki is cut off now');
-    expect(s.standing, isEmpty, reason: 'a cut-off circle\'s collections earn no interest');
+    expect(standing(s, 'a'), 0, reason: 'a cut-off circle\'s collections earn no interest');
     expect(pool(s, 'x'), x0 + p.issuanceOn(2) * ChainParams.storageShare ~/ 100 ~/ 2, reason: 'x earns storage again');
   });
 
-  test('a keeper that misses a proof loses its standing', () {
+  test('a keeper that misses a proof may not prove again until it declares again, which drops its standing', () {
     final s = library(
       circles: ['wiki', 'x'],
       partitionSizes: [256],
@@ -160,8 +174,12 @@ void main() {
     keep(s, 'a', 'x', [0]);
     proveAndClose(s);
     proveAndClose(s);
-    expect(s.standing['a'], isNotNull);
-    s.startDay(s.day + 1); // no proof today
+    expect(standing(s, 'a'), greaterThan(0));
+    expect(lapsed(s, 'a', s.day), isFalse);
+    s.startDay(s.day + 1); // no proof on the day before
+    s.startDay(s.day + 1);
+    expect(lapsed(s, 'a', s.day), isTrue, reason: 'it missed a day');
+    dropKeeper(s, 'a'); // what declaring again does first
     expect(s.standing['a'], isNull);
     expect(s.declarations['a'], isNull);
   });
@@ -189,7 +207,7 @@ void main() {
       for (var d = 0; d < 60; d++) {
         proveAndClose(s);
       }
-      final honest = s.standing['honest0']!, colluder = s.standing['r0-0']!;
+      final honest = standing(s, 'honest0'), colluder = standing(s, 'r0-0');
       print('ring of $ringSize: ${(colluder / honest).toStringAsFixed(3)}x an honest keeper\'s standing');
       expect(colluder, greaterThan(honest), reason: 'keeping others\' data does pass standing on');
       expect(colluder / honest, lessThanOrEqualTo(1.5));

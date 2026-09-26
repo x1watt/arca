@@ -8,6 +8,7 @@ import 'package:arca_core/src/chain/block.dart';
 import 'package:arca_core/src/chain/fraud.dart';
 import 'package:arca_core/src/chain/merkle.dart';
 import 'package:arca_core/src/chain/params.dart';
+import 'package:arca_core/src/chain/rewards.dart' show recordProof;
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:test/test.dart';
@@ -52,6 +53,7 @@ void main() {
       target: b.target,
       traceRoot: Block.traceRootOf([for (final r in t) fromHex(r)]),
       trace: t,
+      settleSteps: b.settleSteps,
     ).signedBy(producer);
   }
 
@@ -103,16 +105,41 @@ void main() {
     await proof.verify(p, genesisRoot: genesisRoot);
   });
 
-  test('a wrong day settlement is shown with the namespaces the settlement goes through', () async {
-    final (s1, h1) = await history();
-    // The next block opens day 1: the prelude settles day 0.
+  test('a wrong settlement step is shown with the entries of the one keeper it settles', () async {
+    // Genesis with 60 keepers who proved day 0 (as their holding proofs
+    // would have recorded it), so day 1's first block settles them.
+    final g = ChainState.genesis(
+      p,
+      circles: {'commons': CircleState(admin: pk(producer), name: 'Commons')},
+      collections: {
+        'files': CollectionState(circle: 'commons', partitions: [0], seed: 100 * m),
+      },
+      partitionSizes: [256],
+    );
+    for (var i = 0; i < 60; i++) {
+      final k = toHex(List.generate(32, (_) => rng.nextInt(256)));
+      g.declarations[k] = {0: 'commons'};
+      g.declaredOn[k] = {0: 0};
+      g.keepers++;
+      recordProof(g, k, 0, 'commons');
+    }
+    final b1 = await Block.produce(g, producer, const [], tick: 1);
+    final s1 = await b1.applyTo(g);
     final honest = await Block.produce(s1, producer, const [], tick: p.dayTicks + 1);
-    final bad = rewrite(honest, trace: [randomRoot()]);
-    final proof = (await FraudProof.build(s1, h1, bad))!;
-    expect(proof.json['step'], 0);
+    expect(honest.settleSteps, greaterThan(0), reason: 'day 0 is settled in steps');
+    await honest.applyTo(s1);
+    expect(await FraudProof.build(s1, Header.of(b1), honest), isNull);
+    // A producer that pays itself in step 2.
+    final trace = [...honest.trace]..[2] = randomRoot();
+    final bad = rewrite(honest, trace: trace);
+    final proof = (await FraudProof.build(s1, Header.of(b1), bad))!;
+    expect(proof.json['step'], 2);
     final witness = proof.json['witness'] as Map;
-    expect((witness['declarations'] as Map).containsKey('full'), isTrue);
-    await proof.verify(p, genesisRoot: genesisRoot);
+    expect(witness.keys.where((ns) => (witness[ns] as Map).containsKey('full')), [
+      'meta',
+    ], reason: 'no namespace whole');
+    await FraudProof(jsonRoundTrip(proof.json)).verify(p, genesisRoot: g.rootHex);
+    print('fraud proof for one settlement step of 60 keepers: ${canonicalJson(proof.json).length} bytes');
   });
 
   test('a trace that does not end at the state root is shown', () async {

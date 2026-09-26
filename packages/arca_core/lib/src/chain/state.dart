@@ -46,6 +46,10 @@ class CircleState {
   /// Grains each member has claimed from the pool so far.
   final claimed = <String, int>{};
 
+  /// The collections the circle's latest anchor listed (their ids), so an
+  /// anchor replaces them without going through every collection.
+  final collections = <String>[];
+
   /// Reading, as the latest anchor sets it: the price of a 24-hour pass
   /// (0 when passes are not sold), the free allowance in bytes per reader
   /// per day, and the sync score that gives members free access.
@@ -67,6 +71,7 @@ class CircleState {
     'anchoredAt': anchoredAt,
     'logAt': logAt,
     'claimed': claimed,
+    'collections': collections,
     'passPrice': passPrice,
     'freeAllowance': freeAllowance,
     'memberScore': memberScore,
@@ -86,6 +91,7 @@ class CircleState {
         ..anchoredAt = m['anchoredAt'] as int
         ..logAt = m['logAt'] as String? ?? ''
         ..claimed.addAll((m['claimed'] as Map).cast<String, int>())
+        ..collections.addAll((m['collections'] as List? ?? const []).cast<String>())
         ..passPrice = m['passPrice'] as int
         ..freeAllowance = m['freeAllowance'] as int
         ..memberScore = m['memberScore'] as int;
@@ -98,6 +104,7 @@ class CircleState {
     ..anchoredAt = anchoredAt
     ..logAt = logAt
     ..claimed.addAll(claimed)
+    ..collections.addAll(collections)
     ..passPrice = passPrice
     ..freeAllowance = freeAllowance
     ..memberScore = memberScore;
@@ -143,14 +150,18 @@ class ChainState {
   /// Collection to (day to marcas burned for it by non-members).
   final burnsFor = StateMap<Map<int, int>>('burns');
 
-  /// Keeper key to standing, recomputed as each day closes.
-  final standing = StateMap<int>('standing');
+  /// Keeper key to its standing: [day, amount, collections kept that day]
+  /// (rewards.dart).
+  final standing = StateMap<List<int>>('standing');
 
   /// Open passes by the id of the transaction that bought them.
   final passes = StateMap<PassState>('passes');
 
-  /// Circle to (member key to sync score), updated as each day closes.
-  final syncScores = StateMap<Map<String, int>>('sync');
+  /// '<circle> <member key>' to [day, sync score] (rewards.dart).
+  final syncScores = StateMap<List<int>>('sync');
+
+  /// A day's running totals and the settlement queues (rewards.dart).
+  final tally = StateMap<Object?>('tally');
 
   /// Keeper key to (partition to the circle the keeping is for).
   final declarations = StateMap<Map<int, String>>('declarations');
@@ -179,6 +190,11 @@ class ChainState {
   /// How many keepers have declarations (kept so a block need not go
   /// through them all to know whether mining needs a proof).
   int keepers = 0;
+
+  /// The oldest day with keepers still to settle, and the soonest day with
+  /// passes to close; -1 for none (rewards.dart).
+  int settleFrom = -1;
+  int passFrom = -1;
 
   int dayOf(int tick) => tick < genesisTick ? 0 : (tick - genesisTick) ~/ params.dayTicks;
 
@@ -212,6 +228,10 @@ class ChainState {
       if (c.anchoredAt < 0) c.anchoredAt = genesisTick;
     }
     s.collections.addAll(collections);
+    for (final e in collections.entries) {
+      s.circles[e.value.circle]?.collections.add(e.key);
+      indexCollection(s, e.key, e.value.partitions, add: true);
+    }
     return s;
   }
 
@@ -222,9 +242,10 @@ class ChainState {
     circles.copyInto(s.circles, (v) => v.copy());
     collections.copyInto(s.collections, (v) => v); // never changed in place
     burnsFor.copyInto(s.burnsFor, Map.of);
-    standing.copyInto(s.standing, (v) => v);
+    standing.copyInto(s.standing, List.of);
     passes.copyInto(s.passes, (v) => v.copy());
-    syncScores.copyInto(s.syncScores, Map.of);
+    syncScores.copyInto(s.syncScores, List.of);
+    tally.copyInto(s.tally, _copyJson);
     declarations.copyInto(s.declarations, Map.of);
     declaredOn.copyInto(s.declaredOn, Map.of);
     provenOn.copyInto(s.provenOn, Map.of);
@@ -247,6 +268,7 @@ class ChainState {
     'declarations',
     'declaredOn',
     'provenOn',
+    'tally',
   ];
 
   /// The scalar fields, as the one entry of the 'meta' namespace.
@@ -263,6 +285,8 @@ class ChainState {
     'beacon': beacon,
     'genesisTick': genesisTick,
     'keepers': keepers,
+    'settleFrom': settleFrom,
+    'passFrom': passFrom,
   };
 
   set meta(Map<String, Object?> m) {
@@ -278,6 +302,8 @@ class ChainState {
     beacon = m['beacon'] as String;
     genesisTick = m['genesisTick'] as int;
     keepers = m['keepers'] as int;
+    settleFrom = m['settleFrom'] as int? ?? -1;
+    passFrom = m['passFrom'] as int? ?? -1;
   }
 
   static String _intMap(Map<int, Object?> m) => canonicalJson({for (final e in m.entries) '${e.key}': e.value});
@@ -296,13 +322,16 @@ class ChainState {
       (v) => CollectionState.fromJson(jsonDecode(v) as Map),
     ),
     (burnsFor, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
-    (standing, (v) => '$v', int.parse),
+    (standing, canonicalJson, (v) => (jsonDecode(v) as List).cast<int>()),
     (passes, (v) => canonicalJson((v as PassState).toJson()), (v) => PassState.fromJson(jsonDecode(v) as Map)),
-    (syncScores, canonicalJson, (v) => (jsonDecode(v) as Map).cast<String, int>()),
+    (syncScores, canonicalJson, (v) => (jsonDecode(v) as List).cast<int>()),
     (declarations, (v) => _intMap(v as Map<int, String>), _intMapOf<String>),
     (declaredOn, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
     (provenOn, (v) => _intMap(v as Map<int, int>), _intMapOf<int>),
+    (tally, canonicalJson, (v) => jsonDecode(v) as Object),
   ];
+
+  static Object? _copyJson(Object? v) => v is List || v is Map ? jsonDecode(jsonEncode(v)) : v;
 
   StateMap mapOf(String namespace) => _maps.firstWhere((m) => m.$1.namespace == namespace).$1;
 
@@ -466,6 +495,8 @@ class ChainState {
         if (partitionSizes.isNotEmpty && parts.any((p) => p >= partitionSizes.length)) {
           throw const ChainError('no such partition');
         }
+        // A keeper that missed a proof starts over.
+        if (lapsed(this, tx.from, day)) dropKeeper(this, tx.from);
         if (!declarations.containsKey(tx.from)) keepers++;
         final mine = declarations.putIfAbsent(tx.from, () => {});
         final since = declaredOn.putIfAbsent(tx.from, () => {});
@@ -504,6 +535,7 @@ class ChainState {
           throw const ChainError('no such collection in this circle');
         }
         _spend(tx.from, circle.passPrice);
+        queuePass(this, tx.id, passCloseDay(this, tick + params.passTicks));
         passes[tx.id] = PassState(
           reader: tx.from,
           circle: id,
@@ -532,6 +564,7 @@ class ChainState {
         if (proof.keeper != tx.from) throw const ChainError('a keeper proves only its own keeping');
         if (declarations[tx.from]?[proof.partition] != proof.circle) throw const ChainError('partition not declared');
         if ((b['day'] as int?) != day) throw const ChainError('a holding proof is for the current day');
+        if (lapsed(this, tx.from, day)) throw const ChainError('this keeper missed a day and must declare again');
         final why = await proof.check(
           params,
           holdChallenge(beacon, day, tx.from, proof.partition),
@@ -540,34 +573,18 @@ class ChainState {
         );
         if (why != null) throw ChainError('bad holding proof: $why');
         provenOn.putIfAbsent(tx.from, () => {})[proof.partition] = day;
+        recordProof(this, tx.from, proof.partition, proof.circle);
       default:
         throw ChainError('unknown transaction ${tx.type}');
     }
     if (numbered) nonces[tx.from] = expected + 1;
   }
 
-  /// Closes the current day and opens [newDay]: every keeper must have
-  /// proven each partition it declared before the day began, or loses all
-  /// its declarations (whitepaper, section 7).
+  /// Opens [newDay]. The day that ended is settled in steps by the next
+  /// blocks (rewards.dart); keepers that missed a proof are caught when
+  /// they next act (whitepaper, section 7).
   void startDay(int newDay) {
     if (newDay <= day) return;
-    for (final keeper in declarations.keys.toList()) {
-      final since = declaredOn[keeper] ?? const {};
-      final proven = provenOn[keeper] ?? const {};
-      final missed = declarations[keeper]!.keys.any((p) => (since[p] ?? day) < day && proven[p] != day);
-      if (missed) {
-        keepers--;
-        declarations.remove(keeper);
-        declaredOn.remove(keeper);
-        provenOn.remove(keeper);
-        standing.remove(keeper);
-        for (final scores in syncScores.values) {
-          scores.remove(keeper);
-        }
-      }
-    }
-    settleDay(this, day);
-    closePasses(this, genesisTick + newDay * params.dayTicks);
     day = newDay;
     beacon = head;
   }
@@ -626,9 +643,18 @@ class ChainState {
       }
       next[id] = CollectionState(circle: circle, partitions: parts, seed: existing?.seed ?? 0);
     }
-    collections
-      ..removeWhere((_, c) => c.circle == circle)
-      ..addAll(next);
+    final c = circles[circle]!;
+    for (final id in c.collections) {
+      final old = collections.remove(id);
+      if (old != null) indexCollection(this, id, old.partitions, add: false);
+    }
+    c.collections
+      ..clear()
+      ..addAll(next.keys.toList()..sort());
+    next.forEach((id, col) {
+      collections[id] = col;
+      indexCollection(this, id, col.partitions, add: true);
+    });
   }
 
   /// Whether [circle] anchored recently enough at [atTick] to earn.
@@ -644,6 +670,9 @@ class ChainState {
     if (c == null || amount <= 0 || _isMember(key, c.circle)) return;
     final days = burnsFor.putIfAbsent(collection, () => {});
     days[day] = (days[day] ?? 0) + amount;
+    // Older than the window no longer counts.
+    days.removeWhere((d, _) => d <= day - ChainParams.interestWindowDays);
+    noteBurn(this, collection, amount);
   }
 
   /// Whether [key] belongs to [circle]: its admin, a moderator, or a

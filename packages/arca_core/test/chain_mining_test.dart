@@ -8,6 +8,7 @@ import 'package:arca_core/src/chain/corpus.dart';
 import 'package:arca_core/src/chain/fraud.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/params.dart';
+import 'package:arca_core/src/chain/rewards.dart' show lapsed;
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:test/test.dart';
@@ -115,7 +116,7 @@ void main() {
     await expectLater(mine(state, keeperKey, 2), throwsA(predicate((e) => '$e'.contains('target'))));
   });
 
-  test('a keeper that misses a day\'s holding proof loses its declarations; one that proves keeps them', () async {
+  test('a keeper that misses a day\'s holding proof may not prove again until it declares again', () async {
     for (final prove in [true, false]) {
       var state = await declared(keeperKey, 0);
       // Day 1: the first block opens it; the keeper proves (or not).
@@ -128,9 +129,24 @@ void main() {
         expect(block.txs, hasLength(1), reason: 'a valid holding proof is included');
         state = await block.applyTo(state);
       }
-      // Day 2 opens: the check runs.
+      // Day 2: a keeper that missed day 1 may still mine, but not prove.
       state = await (await mine(state, keeperKey, 200)).applyTo(state);
-      expect(state.declarations.containsKey(pk(keeperKey)), prove, reason: prove ? 'proved, kept' : 'missed, dropped');
+      expect(lapsed(state, pk(keeperKey), state.day), !prove, reason: prove ? 'proved, kept' : 'missed a day');
+      final proof = await keeper(keeperKey).prove(holdChallenge(state.beacon, 2, pk(keeperKey), 0), 0, 'commons');
+      final tx = Tx.sign(keeperKey, TxType.holdingProof, 0, {'day': 2, 'proof': proof.toJson()});
+      if (prove) {
+        await state.copy().apply(tx);
+      } else {
+        await expectLater(state.copy().apply(tx), throwsA(predicate((e) => '$e'.contains('declare again'))));
+        // Declaring again starts over.
+        final again = Tx.sign(keeperKey, TxType.declare, 1, {
+          'circle': 'commons',
+          'partitions': [0],
+        });
+        final restarted = state.copy()..tick += 1;
+        await restarted.apply(again);
+        expect(lapsed(restarted, pk(keeperKey), restarted.day), isFalse);
+      }
     }
   });
 

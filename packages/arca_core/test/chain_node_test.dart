@@ -14,6 +14,7 @@ import 'package:arca_core/src/chain/corpus.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/node.dart';
 import 'package:arca_core/src/chain/params.dart';
+import 'package:arca_core/src/chain/rewards.dart' show lapsed;
 import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:test/test.dart';
@@ -165,6 +166,6 @@ Future<void> run(double drop, Duration latency, ChainParams p) async {
   for (var i = 0; i < 3; i++) {
     expect(s.declarations[nodes[i].key], {i: 'commons'}, reason: 'keeper $i proved its keeping every day');
   }
-  expect(s.declarations.containsKey(nodes[3].key), isFalse, reason: 'the false claim was dropped');
+  expect(lapsed(s, nodes[3].key, s.day), isTrue, reason: 'the false claim was caught: it can prove nothing');
   await tmp.delete(recursive: true);
 }
