@@ -179,6 +179,8 @@ Cause, in `i2p-dart`: an inbound gateway was considered dead only when the conne
 
 Fix (`i2p-dart`, `lib/src/i2p_node.dart`): each gateway remembers when it was built; the keepalive builds replacements for gateways older than five and a half minutes, retires the old ones once the new ones stand, and republishes at once; a lease never ends later than its tunnel. Measured with `tool/reach_check.dart` (one node reaching another's profile every three minutes): before, the address went dark at about ten minutes; after, the node rotated its four gateways at 9.6 minutes and stayed reachable (the first request after a rotation took up to a minute while the other side still held the old leases).
 
+The same cache bites after a restart. A seed node (the founder) that restarted came back on new tunnels, but its peers still held its old leases, and every send to them was "handed to a gateway" and lost; the seed, which learns peers only from what reaches it, knew nobody to tell. Both sides mined alone until the old leases ran out. Fix (`chain/worker.dart`): a node remembers the peers it heard from (`peers.json`, at most 64, saved with the snapshot) and sends to them from the start, and every datagram carries the sender's current leases, so the first block it sends updates the others' caches.
+
 > **Rule: a network test must outlast every lifetime in the protocol.** I2P tunnels and leases last ten minutes; every live check so far ran for less, so all of them passed.
 
 ---

@@ -883,6 +883,7 @@ class CoreState {
     this.chain,
     this.chainPending = false,
     this.chainError,
+    this.publicInvite,
     this.sharing = const SharingView(),
     this.searches = const [],
     this.opened = const [],
@@ -913,6 +914,9 @@ class CoreState {
 
   /// Why the test network could not start on this device, if it could not.
   final String? chainError;
+
+  /// The public test network's invite, when there is one.
+  final String? publicInvite;
   final SharingView sharing;
 
   /// This profile's recent searches, newest first.
@@ -1073,6 +1077,7 @@ class Core {
       chain: ChainView.fromMap(result['chain'] as Map?),
       chainPending: result['chainPending'] as bool? ?? false,
       chainError: result['chainError'] as String?,
+      publicInvite: result['publicInvite'] as String?,
       sharing: SharingView.fromMap(result['sharing'] as Map?),
       searches: [
         for (final e in result['searches'] as List? ?? const [])

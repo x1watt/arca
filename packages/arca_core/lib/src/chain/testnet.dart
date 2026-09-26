@@ -89,6 +89,17 @@ class TestnetSpec {
     genesisTick: genesisTick,
   );
 
+  /// The public test network's invite, kept by its seed node
+  /// (docs/seed-node.md), so joining needs no invite passed by hand. The
+  /// environment variable ARCA_PUBLIC_INVITE replaces it (to try another
+  /// seed); empty means there is none.
+  static final String? publicInvite = () {
+    final v = (Platform.environment['ARCA_PUBLIC_INVITE'] ?? _publicInvite).trim();
+    return parseInvite(v) == null ? null : v;
+  }();
+
+  static const _publicInvite = '';
+
   static String invite(String specHash, String arcaAddress) => 'arca-chain:$specHash:$arcaAddress';
 
   /// (spec hash, arca address) of an invite, or null.

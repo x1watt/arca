@@ -181,7 +181,9 @@ void showPrototypeNote(BuildContext context, String action) =>
     showMessage(context, '$action: not available yet');
 
 /// "1 file", "3 files".
-String plural(int n, String word) => '$n $word${n == 1 ? '' : 's'}';
+/// "1 file", "2 files"; [many] for words that do not just add an s.
+String plural(int n, String word, [String? many]) =>
+    '$n ${n == 1 ? word : many ?? '${word}s'}';
 
 /// Opens a file or folder with the system's default application.
 Future<void> openWithSystem(BuildContext context, String path) async {

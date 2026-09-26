@@ -1,11 +1,15 @@
 // Collection sync, roles and approved changes over the live I2P network:
 // three instances, each with its own I2P node, as on three devices.
 //
-//   dart run tool/live_sync_check.dart <data dir> <file>...
+//   dart run tool/live_sync_check.dart [--hours=N] <data dir> <file>...
 //
 // A (admin) shares the files; F (follower) keeps a copy and suggests a
 // change; M (moderator) edits, adds a file and accepts F's suggestion. The
 // outsider checks run from F. Prints what happened and how long it took.
+//
+// With --hours, the three then stay up that long: every ten minutes A adds
+// a file and F must copy it, which shows whether sync keeps working as
+// tunnels, gateways and leases turn over.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -16,6 +20,26 @@ import 'package:arca_core/src/library/collection_index.dart';
 final t0 = DateTime.now();
 String t() => '${DateTime.now().difference(t0).inSeconds}s'.padLeft(5);
 void say(String m) => print('${t()}  $m');
+
+/// Like [waitFor], but reports a miss instead of stopping the run: null
+/// when [ok] did not hold within [limit].
+Future<Duration?> within(
+  CoreService c,
+  bool Function(Map<String, Object?>) ok, {
+  Duration limit = const Duration(minutes: 10),
+}) async {
+  final start = DateTime.now();
+  var nextPoke = start.add(const Duration(seconds: 30));
+  while (DateTime.now().difference(start) < limit) {
+    if (ok(await c.handle('state', {}))) return DateTime.now().difference(start);
+    if (DateTime.now().isAfter(nextPoke)) {
+      await c.handle('refreshFollows', {});
+      nextPoke = DateTime.now().add(const Duration(seconds: 30));
+    }
+    await Future<void>.delayed(const Duration(seconds: 1));
+  }
+  return null;
+}
 
 Future<Map<String, Object?>> waitFor(
   CoreService c,
@@ -43,8 +67,14 @@ Future<Map<String, Object?>> waitFor(
 }
 
 Future<void> main(List<String> args) async {
-  final dir = args.first;
-  final files = args.skip(1).toList();
+  // earlyoom may send SIGTERM when memory runs low (docs/TODO.md, 3).
+  ProcessSignal.sigterm.watch().listen((_) => say('(ignored a SIGTERM)'));
+  final hours = double.parse(
+    args.where((a) => a.startsWith('--hours=')).map((a) => a.substring(8)).firstOrNull ?? '0',
+  );
+  final rest = args.where((a) => !a.startsWith('--')).toList();
+  final dir = rest.first;
+  final files = rest.skip(1).toList();
   Future<CoreService> open(String name) async {
     final c = await CoreService.open(
       '$dir/$name',
@@ -201,9 +231,42 @@ Future<void> main(List<String> args) async {
   say('F sends a signed change straight to A\'s relay: accepted=${res.accepted} "${res.message}"');
   final still = adminFiles(await a.handle('state', {})).any((x) => x['path'] == target['path']);
   say('file still in A\'s collection: $still');
-  say(res.accepted || !still ? 'FAILED' : 'ALL CHECKS PASSED');
+  var failed = res.accepted || !still;
+  say(failed ? 'FAILED' : 'ALL CHECKS PASSED');
+
+  // 6. Over hours: a new file every ten minutes.
+  if (hours > 0 && !failed) {
+    final end = DateTime.now().add(Duration(minutes: (hours * 60).round()));
+    final took = <int>[];
+    var missed = 0, round = 0;
+    while (DateTime.now().isBefore(end)) {
+      round++;
+      final name = 'round-$round.txt';
+      final p = File('$dir/$name')..writeAsStringSync('round $round at ${DateTime.now()}\n');
+      await a.handle('addFiles', {'collection': col, 'paths': [p.path]});
+      final d = await within(f, (s) => (syncOf(s)?['files'] as Map?)?.containsKey(name) == true);
+      if (d == null) {
+        missed++;
+        say('MISS round $round: F did not copy $name within ten minutes');
+      } else {
+        took.add(d.inSeconds);
+        say('OK   round $round: F copied $name in ${d.inSeconds} s');
+      }
+      final next = DateTime.now().add(const Duration(minutes: 10) - (d ?? const Duration(minutes: 10)));
+      while (DateTime.now().isBefore(next) && DateTime.now().isBefore(end)) {
+        await Future<void>.delayed(const Duration(seconds: 5));
+      }
+    }
+    took.sort();
+    say(
+      'over ${hours}h: $round rounds, $missed missed'
+      '${took.isEmpty ? '' : ', median ${took[took.length ~/ 2]} s, worst ${took.last} s'}',
+    );
+    failed = missed > 0;
+    say(failed ? 'FAILED' : 'ALL ROUNDS PASSED');
+  }
   for (final c in [a, m, f]) {
     await c.close();
   }
-  exit(res.accepted || !still ? 6 : 0);
+  exit(failed ? 6 : 0);
 }

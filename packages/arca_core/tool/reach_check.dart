@@ -11,8 +11,9 @@ final t0 = DateTime.now();
 String t() => '${(DateTime.now().difference(t0).inSeconds / 60).toStringAsFixed(1)}m'.padLeft(6);
 
 Future<void> main(List<String> args) async {
-  // Something on this machine sends long runs SIGTERM; note it and go on
-  // (Ctrl-C still stops the check).
+  // earlyoom sends dart processes SIGTERM when memory runs low
+  // (docs/TODO.md, 3); note it and go on, so a long check is not lost to a
+  // short peak (Ctrl-C still stops the check).
   ProcessSignal.sigterm.watch().listen((_) => print('${t()} (ignored a SIGTERM)'));
   final dir = args[0];
   final minutes = int.parse(args[1]);

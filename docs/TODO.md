@@ -28,16 +28,17 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 
 ## 3. Harden I2P and the network
 
-- [ ] Commit the `i2p-dart` gateway rotation fix (`docs/performance.md` 3.16) in its own repository, with a test, apart from the changes already pending there.
+- [x] Commit the `i2p-dart` gateway rotation fix (`docs/performance.md` 3.16) in its own repository, with a test, apart from the changes already pending there. (i2p-dart daa3e41: the rules are in `GatewayClock`, tested in `test/gateway_rotation_test.dart`.)
 - [ ] Reachability and sync over hours, not minutes (`tool/reach_check.dart`, `tool/live_sync_check.dart`), on the desktop and the C61.
 - [ ] Battery and data use on the C61 with the test network running, in light and full mode.
-- [ ] Find out what sends long runs on this machine SIGTERM.
+- [x] Find out what sends long runs on this machine SIGTERM. It is earlyoom (`/etc/default/earlyoom`: `-m 10,5 --prefer=...dart...`): when free memory and swap both fall to 10% it stops a dart process first. It stopped 30 dart processes in a week (test runners, the compiler, `reach_check`). Long checks need free memory; the code is not at fault.
 
 ## 4. A public test network
 
-- [ ] A seed node: a headless founder (`tool/`), run as a service, that keeps a public collection and the test network going.
-- [ ] A default invite in the app, so joining needs no invite passed by hand.
-- [ ] Docs for running a seed node and for joining.
+- [x] A seed node: a headless founder (`tool/seed_node.dart`), run as a service, that keeps a public collection and the test network going. Tried on I2P: founds the network, stops cleanly on SIGTERM, resumes with the same invite, and a desktop app joined it with one button. A restart used to cut it off from its peers for up to ten minutes (they held its old tunnels); nodes now remember their peers (`docs/performance.md`, 3.16).
+- [ ] Run the seed somewhere that stays on, with a public-domain corpus, and put its invite in `TestnetSpec._publicInvite`.
+- [x] A default invite in the app, so joining needs no invite passed by hand (`TestnetSpec.publicInvite`, shown in the wallet as "Join the public test network"; `ARCA_PUBLIC_INVITE` replaces it).
+- [x] Docs for running a seed node and for joining (`docs/seed-node.md`).
 
 ## Later
 

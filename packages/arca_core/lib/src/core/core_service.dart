@@ -823,6 +823,7 @@ class CoreService {
       // A testnet chosen but not running yet (the network is still coming up).
       'chainPending': _store.active != null && _chainHas.contains(_activeId) && !_chainStates.containsKey(_activeId),
       'chainError': _store.active == null ? null : _chainErrors[_activeId],
+      'publicInvite': TestnetSpec.publicInvite,
       'proposals': _store.active == null ? const [] : await _proposals(_activeId),
       'mySuggestions': _store.active == null ? const [] : await _mySuggestions(_activeId),
     };

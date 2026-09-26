@@ -211,6 +211,10 @@ void main() {
     await a.close();
     await b.close();
     a = await open('founder');
+    // Before anyone reaches it, the founder knows its peers again: it
+    // remembered them, so it tells them of its blocks from the start.
+    sa = await waitFor(a, (s) => chainOf(s)['height'] != null, what: 'the founder is back on its chain');
+    expect(chainOf(sa)['peers'], greaterThanOrEqualTo(1), reason: 'peers are kept across a restart');
     b = await open('joiner');
     sa = await waitFor(a, (s) => (chainOf(s)['height'] as int? ?? 0) > heightBefore, what: 'the founder resumes');
     sb = await waitFor(b, ready, what: 'the joiner resumes', seconds: 60);

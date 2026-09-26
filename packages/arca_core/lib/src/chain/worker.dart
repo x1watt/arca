@@ -402,7 +402,11 @@ class ChainWorker {
     final signer = _RemoteSigner(this, profile, a['pubkey'] as String);
     final address = a['address'] as String;
     final genesis = spec.genesis();
-    final peers = (a['peers'] as List).cast<String>();
+    // The peers heard from before a restart are told of our new blocks at
+    // once; otherwise a founder, which starts with no peers, would wait to
+    // be reached, and those who cached its old tunnels could not reach it
+    // until their cache ran out (docs/performance.md, 3.16).
+    final peers = {...(a['peers'] as List).cast<String>(), ...await _loadPeers(dir)}.toList();
     final snap = File('$dir/snapshot.json');
     ChainNode? node;
     if (await snap.exists()) {
@@ -712,6 +716,20 @@ class ChainWorker {
     final f = File('${m.dir}/snapshot.json');
     await File('${f.path}.tmp').writeAsString(jsonEncode(m.node.snapshot()));
     await File('${f.path}.tmp').rename(f.path);
+    final p = File('${m.dir}/peers.json');
+    await File('${p.path}.tmp').writeAsString(jsonEncode(m.node.peers.take(_keptPeers).toList()));
+    await File('${p.path}.tmp').rename(p.path);
+  }
+
+  /// At most this many peers are remembered across restarts.
+  static const _keptPeers = 64;
+
+  static Future<List<String>> _loadPeers(String dir) async {
+    try {
+      return (jsonDecode(await File('$dir/peers.json').readAsString()) as List).cast<String>();
+    } on Object {
+      return const [];
+    }
   }
 
   /// Builds the corpus once every file is here, then packs and declares

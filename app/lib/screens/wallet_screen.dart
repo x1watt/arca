@@ -146,6 +146,7 @@ class _NotOnChainState extends State<_NotOnChain> {
 
   @override
   Widget build(BuildContext context) {
+    final public = widget.state.publicInvite;
     return EmptyState(
       icon: Icons.toll_outlined,
       title: _error != null
@@ -154,8 +155,10 @@ class _NotOnChainState extends State<_NotOnChain> {
       text: _error != null
           ? _error!
           : 'Keep a copy of a circle\'s files and prove it every day, and the chain pays your circle in marcas. '
-                'This is a test network: its marcas have no value. Start one from one of your collections, '
-                'or join one with an invite from someone who started it.',
+                'This is a test network: its marcas have no value. '
+                '${public != null ? 'Join the public one, start your own from one of your collections, or join '
+                          'another with an invite.' : 'Start one from one of your collections, or join one with an '
+                          'invite from someone who started it.'}',
       action: _busy
           ? const Column(
               children: [
@@ -169,11 +172,24 @@ class _NotOnChainState extends State<_NotOnChain> {
               runSpacing: 12,
               alignment: WrapAlignment.center,
               children: [
-                FilledButton.icon(
-                  onPressed: _start,
-                  icon: const Icon(Icons.play_arrow_outlined),
-                  label: const Text('Start a test network'),
-                ),
+                if (public != null)
+                  FilledButton.icon(
+                    onPressed: () => _do(() => Core.instance.chainJoin(public)),
+                    icon: const Icon(Icons.public),
+                    label: const Text('Join the public test network'),
+                  ),
+                if (public != null)
+                  OutlinedButton.icon(
+                    onPressed: _start,
+                    icon: const Icon(Icons.play_arrow_outlined),
+                    label: const Text('Start a test network'),
+                  )
+                else
+                  FilledButton.icon(
+                    onPressed: _start,
+                    icon: const Icon(Icons.play_arrow_outlined),
+                    label: const Text('Start a test network'),
+                  ),
                 OutlinedButton.icon(
                   onPressed: _join,
                   icon: const Icon(Icons.group_add_outlined),
@@ -449,7 +465,7 @@ class _Keeping extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${_status(p)}. ${plural(p.copies, 'copy')} on the network.',
+                  '${_status(p)}. ${plural(p.copies, 'copy', 'copies')} on the network.',
                   style: muted,
                 ),
                 if (p.packing != null)
