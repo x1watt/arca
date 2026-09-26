@@ -157,19 +157,29 @@ class Steward {
 
   /// Packs [partition] from the plain files. Costly: run it off the main
   /// isolate (one Argon2id per chunk).
-  Future<void> pack(int partition) async {
+  /// Packs [partition]; [onProgress] gets the chunks done and the total.
+  /// A `.done` file beside the packed copy marks it complete.
+  Future<void> pack(int partition, {void Function(int done, int total)? onProgress}) async {
     await Directory(folder).create(recursive: true);
+    final done = File('${packedPath(partition)}.done');
+    if (await done.exists()) await done.delete();
     final out = await File(packedPath(partition)).open(mode: FileMode.write);
     final packed = PackedPartition(packedPath(partition));
+    final total = corpus.chunksIn(partition);
     try {
-      for (var i = 0; i < corpus.chunksIn(partition); i++) {
+      for (var i = 0; i < total; i++) {
         final chunk = await _plainChunk(partition, i);
         await packed.write(out, i, chunk, await packSeed(params, key, partition, i));
+        onProgress?.call(i + 1, total);
       }
     } finally {
       await out.close();
     }
+    await done.writeAsString('$total');
   }
+
+  /// Whether [partition] was packed to the end.
+  bool isPacked(int partition) => File('${packedPath(partition)}.done').existsSync();
 
   Future<Uint8List> _plainChunk(int partition, int index) async {
     final src = corpus.sources[corpus.chunkIndex(partition, index)];

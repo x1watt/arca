@@ -13,6 +13,7 @@ import 'package:crypto/crypto.dart' as c;
 
 import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
+import 'signer.dart';
 
 abstract final class TxType {
   static const transfer = 'transfer';
@@ -60,6 +61,13 @@ class Tx {
   factory Tx.sign(List<int> secretKey, String type, int nonce, Map<String, Object?> body) {
     final from = toHex(publicKeyOf(secretKey));
     final sig = toHex(schnorrSign(secretKey, _idBytes(type, from, nonce, body)));
+    return Tx(type: type, from: from, nonce: nonce, body: body, sig: sig);
+  }
+
+  /// Signs through [signer] (the chain isolate asks the core).
+  static Future<Tx> signWith(Signer signer, String type, int nonce, Map<String, Object?> body) async {
+    final from = signer.publicKey;
+    final sig = toHex(await signer.sign(_idBytes(type, from, nonce, body)));
     return Tx(type: type, from: from, nonce: nonce, body: body, sig: sig);
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
+import 'wallet_screen.dart';
 import '../core/pickers.dart';
 import '../widgets/common.dart';
 import '../widgets/subtitles.dart';
@@ -189,9 +190,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ListTile(
                   leading: const Icon(Icons.toll_outlined),
                   title: const Text('Wallet'),
-                  subtitle: const Text('Not available yet'),
+                  subtitle: Text(
+                    state.chain == null
+                        ? 'Marcas on the test network'
+                        : formatMarcas(state.chain!.balance),
+                  ),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => showPrototypeNote(context, 'Wallet'),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const WalletScreen(),
+                    ),
+                  ),
                 ),
                 ListTile(
                   leading: const Icon(Icons.delete_outline),

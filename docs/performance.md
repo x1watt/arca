@@ -13,6 +13,7 @@ Read this together with `docs/architecture.md`. When you add or change code, che
 - **UI isolate.** Flutter only: widgets, gestures, the media_kit player surface. It receives the whole state as plain maps and never touches keys, sockets, databases or big files.
 - **Core isolate** (`coreIsolateMain`, `core_service.dart`). Profiles, unlocked keys, the per-profile relays and event stores, the library, follows and suggestions, the subtitle queue, model downloads. Requests run concurrently (`unawaited(handle(...).then(send))`), so a slow network call does not hold up a click.
 - **I2P isolate.** The `i2p-dart` worker, one per device, carrying every profile's destination.
+- **Chain isolate.** The chain nodes of the profiles in a test network: block and proof checks (an Argon2id each), mining reads every tick, the circle log. Packing and building the corpus run on isolates it starts per job. It reports its state at most once a second and only when something changed; it reports when the next day starts, not a countdown, so a ticking clock does not push the whole state every second.
 - **Transcription worker.** One `Isolate.run` per file, spawned by the core: libmpv decodes the audio, then whisper.cpp recognises it. Both calls block their thread for seconds to minutes.
 - **ffmpeg processes.** Video previews (a still and a hover GIF) run as child processes, not in Dart at all.
 - **Native threads.** whisper.cpp starts its own compute threads (section 4.2); libmpv starts its decoder and output threads, for the player and for audio decoding.

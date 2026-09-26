@@ -23,6 +23,7 @@ import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
+import 'signer.dart';
 import 'state.dart';
 import 'tx.dart';
 
@@ -202,8 +203,17 @@ class Block {
     List<Tx> txs, {
     required int tick,
     Map<String, Object?> proof = const {},
+  }) => produceWith(state, LocalSigner(secretKey), txs, tick: tick, proof: proof);
+
+  /// [produce], signed through [signer].
+  static Future<Block> produceWith(
+    ChainState state,
+    Signer signer,
+    List<Tx> txs, {
+    required int tick,
+    Map<String, Object?> proof = const {},
   }) async {
-    final producer = toHex(publicKeyOf(secretKey));
+    final producer = signer.publicKey;
     final (next, included, trace) = await _transition(state, tick, producer, proof, txs, strict: false);
     final unsigned = Block(
       height: state.height + 1,
@@ -220,11 +230,13 @@ class Block {
       traceRoot: traceRootOf(trace),
       trace: [for (final r in trace) toHex(r)],
     );
-    return unsigned.signedBy(secretKey);
+    return unsigned._withSig(toHex(await signer.sign(_headerBytes(unsigned.header))));
   }
 
   /// This block signed by [secretKey] (tests build wrong blocks with it).
-  Block signedBy(List<int> secretKey) => Block(
+  Block signedBy(List<int> secretKey) => _withSig(toHex(schnorrSign(secretKey, _headerBytes(header))));
+
+  Block _withSig(String sig) => Block(
     height: height,
     prev: prev,
     tick: tick,
@@ -234,7 +246,7 @@ class Block {
     stateRoot: stateRoot,
     corpusRoot: corpusRoot,
     proof: proof,
-    sig: toHex(schnorrSign(secretKey, _headerBytes(header))),
+    sig: sig,
     target: target,
     traceRoot: traceRoot,
     trace: trace,

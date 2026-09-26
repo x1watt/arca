@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
 import '../screens/settings_screen.dart';
+import '../screens/wallet_screen.dart';
 import 'common.dart';
 
 /// Account avatar in the top-right corner of every main tab.
@@ -41,6 +42,10 @@ class ProfileButton extends StatelessWidget {
           } else if (v == 'settings' || v == 'folders') {
             Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
+            );
+          } else if (v == 'wallet') {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const WalletScreen()),
             );
           } else {
             showPrototypeNote(context, v);
@@ -93,7 +98,7 @@ class ProfileButton extends StatelessWidget {
           const PopupMenuDivider(),
           _item('Edit profile', Icons.badge_outlined, value: 'settings'),
           _item('My circles', Icons.groups_outlined),
-          _item('Wallet', Icons.toll_outlined),
+          _item('Wallet', Icons.toll_outlined, value: 'wallet'),
           _item('Liked and shared files', Icons.thumb_up_outlined),
           _item('History', Icons.history),
           const PopupMenuDivider(),

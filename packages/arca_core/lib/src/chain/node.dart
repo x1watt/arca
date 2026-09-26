@@ -20,9 +20,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import '../crypto/hex.dart';
-import '../crypto/schnorr.dart';
 import '../transport/link.dart';
 import 'block.dart';
+import 'signer.dart';
 import 'wire.dart';
 import 'fraud.dart';
 import 'mining.dart';
@@ -49,24 +49,77 @@ class ChainNode {
     required ChainState genesis,
     required this.address,
     required this.link,
-    required this.secretKey,
+    List<int>? secretKey,
+    Signer? signer,
     this.steward,
     List<String> peers = const [],
     DateTime Function()? now,
+    Block? base,
+    BigInt? baseWork,
+    String? genesisRoot,
   }) : peers = {...peers}..remove(address),
-       _now = now ?? DateTime.now {
-    _entries[''] = _Entry(null, genesis, BigInt.zero);
-    _head = _entries['']!;
+       _now = now ?? DateTime.now,
+       signer = signer ?? LocalSigner(secretKey!),
+       _genesisRoot = genesisRoot ?? genesis.rootHex {
+    _base = _Entry(base, genesis, baseWork ?? BigInt.zero);
+    _entries[base?.hash ?? ''] = _base;
+    _head = _base;
+  }
+
+  /// Where this node's chain starts: genesis, or the block of the snapshot
+  /// it was restarted from ([genesis] is then the state after that block).
+  late final _Entry _base;
+
+  _Entry? _parentOf(_Entry e) => identical(e, _base) ? null : _entries[e.block!.prev];
+
+  /// What a restart needs: the head block, its state and its work.
+  Map<String, Object?> snapshot() => {
+    'block': _head.block?.toJson(),
+    'work': _head.work.toString(),
+    'state': {for (final ns in ChainState.namespaces) ns: _head.state.entries(ns)},
+  };
+
+  /// A node restarted from [snapshot].
+  static ChainNode fromSnapshot(
+    Map snap, {
+    required ChainParams params,
+    required String genesisRoot,
+    required String address,
+    required MessageLink link,
+    List<int>? secretKey,
+    Signer? signer,
+    Steward? steward,
+    List<String> peers = const [],
+  }) {
+    final entries = {
+      for (final e in (snap['state'] as Map).entries) e.key as String: (e.value as Map).cast<String, String>(),
+    };
+    final block = snap['block'] == null ? null : Block.fromJson(snap['block'] as Map);
+    return ChainNode(
+      params: params,
+      genesis: ChainState.fromEntries(params, entries),
+      address: address,
+      link: link,
+      secretKey: secretKey,
+      signer: signer,
+      steward: steward,
+      peers: peers,
+      base: block,
+      baseWork: BigInt.parse(snap['work'] as String),
+      genesisRoot: genesisRoot,
+    );
   }
 
   final ChainParams params;
   final String address;
   final MessageLink link;
-  final List<int> secretKey;
-  late final String key = toHex(publicKeyOf(secretKey));
+
+  /// Signs this node's transactions and blocks.
+  final Signer signer;
+  late final String key = signer.publicKey;
 
   /// This node's packed partitions, when it keeps any.
-  final Steward? steward;
+  Steward? steward;
   final Set<String> peers;
   final DateTime Function() _now;
 
@@ -117,11 +170,19 @@ class ChainNode {
       (state.nonces[key] ?? 0) + _mempool.values.where((t) => t.from == key && TxType.numbered(t.type)).length;
 
   /// Signs and submits a transaction from this node's key.
-  Tx submit(String type, Map<String, Object?> body) {
-    final tx = Tx.sign(secretKey, type, TxType.numbered(type) ? nextNonce() : 0, body);
-    _addTx(tx, null);
-    return tx;
+  Future<Tx> submit(String type, Map<String, Object?> body) {
+    // Signing may go to another isolate: one submission at a time, so each
+    // takes the next nonce.
+    final done = _submitting.then((_) async {
+      final tx = await Tx.signWith(signer, type, TxType.numbered(type) ? nextNonce() : 0, body);
+      _addTx(tx, null);
+      return tx;
+    });
+    _submitting = done.then((_) {}, onError: (Object _) {});
+    return done;
   }
+
+  Future<void> _submitting = Future.value();
 
   void _addTx(Tx tx, String? from) {
     if (_mempool.containsKey(tx.id) || !tx.verify()) return;
@@ -213,7 +274,7 @@ class ChainNode {
   /// [to]: when the head moves to another fork they go back to the mempool.
   List<Tx> _abandoned(_Entry from, _Entry to) {
     int height(_Entry e) => e.block?.height ?? 0;
-    _Entry parent(_Entry e) => _entries[e.block!.prev]!;
+    _Entry parent(_Entry e) => _parentOf(e)!;
     final txs = <Tx>[];
     var old = from, now = to;
     while (height(now) > height(old)) {
@@ -241,12 +302,12 @@ class ChainNode {
     if (_askedAt[peer] == tick) return;
     _askedAt[peer] = tick;
     final have = <String>[];
-    var e = _head;
+    _Entry? e = _head;
     var step = 1;
-    while (e.block != null && have.length < 32) {
+    while (e != null && e.block != null && have.length < 32) {
       have.add(e.block!.hash);
-      for (var i = 0; i < step && e.block != null; i++) {
-        e = _entries[e.block!.prev]!;
+      for (var i = 0; i < step && e != null; i++) {
+        e = _parentOf(e);
       }
       if (have.length > 1) step *= 2;
     }
@@ -259,9 +320,9 @@ class ChainNode {
     for (final h in have) {
       final e = _entries[h];
       if (e?.block == null) continue;
-      var c = _head;
-      while (c.block != null && c.block!.height > e!.block!.height) {
-        c = _entries[c.block!.prev]!;
+      _Entry? c = _head;
+      while (c != null && c.block != null && c.block!.height > e!.block!.height) {
+        c = _parentOf(c);
       }
       if (identical(c, e)) return e!.block!.height + 1;
     }
@@ -271,10 +332,10 @@ class ChainNode {
   /// Blocks of the current chain from [height] on, oldest first.
   List<Block> chainFrom(int height) {
     final list = <Block>[];
-    var e = _head;
-    while (e.block != null && e.block!.height >= height) {
+    _Entry? e = _head;
+    while (e != null && e.block != null && e.block!.height >= height) {
       list.add(e.block!);
-      e = _entries[e.block!.prev]!;
+      e = _parentOf(e);
     }
     return list.reversed.toList();
   }
@@ -314,7 +375,7 @@ class ChainNode {
         return; // before anyone mines, blocks only carry transactions
       }
       final txs = _pick();
-      final block = await Block.produce(head, secretKey, txs, tick: tick, proof: proof);
+      final block = await Block.produceWith(head, signer, txs, tick: tick, proof: proof);
       if (headHash == block.prev) await _accept(block, null);
     } catch (e) {
       // A slice this steward cannot read or prove: no block this tick.
@@ -431,7 +492,11 @@ class ChainNode {
     }
   }
 
-  late final String _genesisRoot = _entries['']!.state.rootHex;
+  final String _genesisRoot;
+
+  /// Answers to requests this node does not know (the testnet spec, a
+  /// circle's log): null to stay silent.
+  Future<Map<String, Object?>?> Function(String from, Map msg)? answer;
 
   /// The state after block [at] as it was committed (head '').
   ChainState? _committed(String at) => _entries[at]?.state.copy()?..head = '';
@@ -493,6 +558,14 @@ class ChainNode {
     }
   }
 
+  static const _known = {'block', 'tx', 'get', 'header', 'fraud', 'entry', 'snapshot', 'part'};
+
+  /// Transactions waiting to go into a block.
+  Iterable<Tx> get waiting => _mempool.values;
+
+  /// The number of peers this node has heard from or been told of.
+  int get peerCount => peers.length;
+
   void _onMessage(String from, Map msg) {
     if (msg['t'] == 'get' && msg['headers'] == true) lightPeers.add(from);
     peers.add(from);
@@ -511,6 +584,12 @@ class ChainNode {
         }
       case 'fraud':
         unawaited(_relayFraud(from, msg));
+      case final String t when !_known.contains(t) && answer != null:
+        unawaited(
+          answer!(from, msg).then((reply) {
+            if (reply != null) _sendLarge(from, {...reply, 'id': msg['id']});
+          }),
+        );
       case 'entry' when msg['keys'] != null:
         _answerEntry(from, msg);
       case 'snapshot' when msg['entries'] == null:

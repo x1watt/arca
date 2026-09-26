@@ -94,6 +94,34 @@ class ChainParams {
   /// Ticks during which a wrong block can be proven wrong.
   final int fraudWindowTicks;
 
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'partitionChunks': partitionChunks,
+    'tickMillis': tickMillis,
+    'dayTicks': dayTicks,
+    'blockTicks': blockTicks,
+    'packMemoryKiB': packMemoryKiB,
+    'dailyIssuance': dailyIssuance,
+    'halvingDays': halvingDays,
+    'floorIssuance': floorIssuance,
+    'circleFee': circleFee,
+    'fraudWindowTicks': fraudWindowTicks,
+  };
+
+  factory ChainParams.fromJson(Map m) => ChainParams(
+    name: m['name'] as String,
+    partitionChunks: m['partitionChunks'] as int,
+    tickMillis: m['tickMillis'] as int,
+    dayTicks: m['dayTicks'] as int,
+    blockTicks: m['blockTicks'] as int,
+    packMemoryKiB: m['packMemoryKiB'] as int,
+    dailyIssuance: m['dailyIssuance'] as int,
+    halvingDays: m['halvingDays'] as int,
+    floorIssuance: m['floorIssuance'] as int,
+    circleFee: m['circleFee'] as int,
+    fraudWindowTicks: m['fraudWindowTicks'] as int,
+  );
+
   static const mainnet = ChainParams(
     name: 'arca-mainnet',
     partitionChunks: 131072, // 32 GiB

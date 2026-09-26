@@ -572,6 +572,159 @@ class CommentView {
 /// The I2P node: off, starting, up or failed.
 enum NetStatus { off, starting, up, failed }
 
+/// One partition of the testnet's corpus, as this profile keeps it.
+class PartitionView {
+  const PartitionView({
+    required this.index,
+    required this.bytes,
+    required this.keep,
+    required this.packing,
+    required this.packed,
+    required this.declared,
+    required this.provenToday,
+    required this.dueToday,
+    required this.copies,
+  });
+  final int index;
+  final int bytes;
+  final bool keep;
+
+  /// 0 to 1 while packing, else null.
+  final double? packing;
+  final bool packed;
+  final bool declared;
+  final bool provenToday;
+
+  /// Whether a proof is due today (from the day after it was declared).
+  final bool dueToday;
+
+  /// Stewards keeping it, this profile included.
+  final int copies;
+
+  factory PartitionView.fromMap(Map m) => PartitionView(
+    index: m['index'] as int,
+    bytes: m['bytes'] as int,
+    keep: m['keep'] as bool,
+    packing: (m['packing'] as num?)?.toDouble(),
+    packed: m['packed'] as bool,
+    declared: m['declared'] as bool,
+    provenToday: m['provenToday'] as bool,
+    dueToday: m['dueToday'] as bool? ?? false,
+    copies: m['copies'] as int,
+  );
+}
+
+/// The active profile's place on the test chain: its wallet, what it keeps
+/// and its circle's pool.
+class ChainView {
+  const ChainView({
+    required this.invite,
+    required this.name,
+    required this.founder,
+    required this.height,
+    required this.day,
+    required this.nextDayAt,
+    required this.dayLength,
+    required this.behind,
+    required this.peers,
+    required this.balance,
+    required this.pending,
+    required this.mining,
+    required this.standing,
+    required this.syncScore,
+    required this.corpusReady,
+    required this.corpusBuilding,
+    required this.corpusError,
+    required this.corpusFiles,
+    required this.corpusPresent,
+    required this.partitions,
+    required this.circleName,
+    required this.pool,
+    required this.isAdmin,
+    required this.claimed,
+  });
+  final String invite;
+  final String name;
+  final bool founder;
+  final int height;
+  final int day;
+
+  /// When the next day starts (milliseconds since the epoch), and a day's
+  /// length in seconds.
+  final int nextDayAt;
+  final int dayLength;
+  final bool behind;
+  final int peers;
+
+  /// In grains (1 marca = 100,000,000 grains).
+  final int balance;
+  final int pending;
+  final bool mining;
+  final int standing;
+  final int syncScore;
+  final bool corpusReady;
+  final bool corpusBuilding;
+  final String? corpusError;
+  final int corpusFiles;
+  final int corpusPresent;
+  final List<PartitionView> partitions;
+  final String circleName;
+  final int pool;
+  final bool isAdmin;
+  final int claimed;
+
+  static ChainView? fromMap(Map? m) {
+    if (m == null) return null;
+    final corpus = m['corpus'] as Map;
+    final circle = m['circle'] as Map?;
+    return ChainView(
+      invite: m['invite'] as String,
+      name: m['name'] as String,
+      founder: m['founder'] as bool,
+      height: m['height'] as int,
+      day: m['day'] as int,
+      nextDayAt: m['nextDayAt'] as int,
+      dayLength: m['dayLength'] as int,
+      behind: m['behind'] as bool,
+      peers: m['peers'] as int,
+      balance: m['balance'] as int,
+      pending: m['pending'] as int,
+      mining: m['mining'] as bool,
+      standing: m['standing'] as int,
+      syncScore: m['syncScore'] as int,
+      corpusReady: corpus['ready'] as bool,
+      corpusBuilding: corpus['building'] as bool,
+      corpusError: corpus['error'] as String?,
+      corpusFiles: corpus['files'] as int,
+      corpusPresent: corpus['present'] as int,
+      partitions: [
+        for (final p in m['partitions'] as List)
+          PartitionView.fromMap(p as Map),
+      ],
+      circleName: circle?['name'] as String? ?? '',
+      pool: circle?['pool'] as int? ?? 0,
+      isAdmin: circle?['admin'] as bool? ?? false,
+      claimed: circle?['claimed'] as int? ?? 0,
+    );
+  }
+}
+
+/// "1,234.5 marcas" from grains, without trailing zeros.
+String formatMarcas(int grains) {
+  final whole = grains ~/ 100000000;
+  final frac = (grains % 100000000)
+      .toString()
+      .padLeft(8, '0')
+      .replaceFirst(RegExp(r'0+$'), '');
+  final digits = whole.toString();
+  final grouped = StringBuffer();
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) grouped.write(',');
+    grouped.write(digits[i]);
+  }
+  return '${grouped.toString()}${frac.isEmpty ? '' : '.$frac'} marcas';
+}
+
 class CoreState {
   const CoreState(
     this.profiles,
@@ -586,6 +739,9 @@ class CoreState {
     this.mySuggestions = const [],
     this.previewsAvailable = false,
     this.subtitles = const SubtitleStatus(),
+    this.chain,
+    this.chainPending = false,
+    this.chainError,
   });
   final List<ProfileView> profiles;
   final String? activeId;
@@ -601,6 +757,15 @@ class CoreState {
   /// Whether this device can make video previews (ffmpeg is installed).
   final bool previewsAvailable;
   final SubtitleStatus subtitles;
+
+  /// The active profile on the test chain; null when it takes no part.
+  final ChainView? chain;
+
+  /// A test network was started or joined and waits for the network.
+  final bool chainPending;
+
+  /// Why the test network could not start on this device, if it could not.
+  final String? chainError;
 
   List<ProposalView> proposalsFor(String collectionId) =>
       proposals.where((p) => p.collectionId == collectionId).toList();
@@ -743,6 +908,9 @@ class Core {
       ],
       previewsAvailable: result['previews'] as bool? ?? false,
       subtitles: SubtitleStatus.fromMap(result['subtitles'] as Map?),
+      chain: ChainView.fromMap(result['chain'] as Map?),
+      chainPending: result['chainPending'] as bool? ?? false,
+      chainError: result['chainError'] as String?,
     );
   }
 
@@ -976,6 +1144,21 @@ class Core {
     }
     return (null, _commentsFrom(r));
   }
+
+  // The test chain and the wallet.
+
+  Future<String?> chainStart(String collection) =>
+      _change('chainStart', {'collection': collection});
+  Future<String?> chainJoin(String invite) =>
+      _change('chainJoin', {'invite': invite});
+  Future<String?> chainLeave() => _change('chainLeave');
+  Future<String?> chainSend(String to, String amount) =>
+      _change('chainSend', {'to': to, 'amount': amount});
+  Future<String?> chainKeep(int partition, bool keep) =>
+      _change('chainKeep', {'partition': partition, 'keep': keep});
+  Future<String?> chainMining(bool on) => _change('chainMining', {'on': on});
+  Future<String?> chainPayout() => _change('chainPayout');
+  Future<String?> chainClaim() => _change('chainClaim');
 
   /// SHA-256 and SHA-1 of a file on disk, computed on the core isolate.
   Future<(String, String)?> hashFile(String path) async {

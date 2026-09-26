@@ -10,7 +10,11 @@ import 'dart:typed_data';
 
 import 'package:i2p/i2p.dart' show sharedDestinationAddress;
 
+import '../chain/testnet.dart';
+import '../chain/wire.dart' show chainTag;
+import '../chain/worker.dart';
 import '../crypto/hex.dart';
+import '../crypto/schnorr.dart' show schnorrSign;
 import '../library/collection_index.dart';
 import '../library/library.dart';
 import '../library/previews.dart';
@@ -23,9 +27,11 @@ import '../nostr/nip19.dart';
 import '../profiles/profile_store.dart';
 import '../profiles/vault.dart';
 import '../relay/event_store.dart';
+import '../transport/link.dart' show Inbound;
 import 'network.dart';
 import 'social.dart';
 
+part 'chain.dart';
 part 'collaboration.dart';
 
 class CoreService {
@@ -82,6 +88,23 @@ class CoreService {
     });
   }
 
+  // The chain (chain.dart): its isolate, the replies awaited from it, the
+  // latest state it reported per profile, and which profiles take part.
+  Future<SendPort>? _chainPort;
+  Completer<void>? _chainStopped;
+  final _chainReplies = <int, Completer<Map<String, Object?>>>{};
+  var _chainNextId = 0;
+  final _chainStates = <String, Map<String, Object?>>{};
+  StreamSubscription<Inbound>? _chainInbound;
+  final _chainAddresses = <String>{};
+  final _chainJoined = <String>{};
+  final _chainNone = <String>{};
+
+  /// Profiles with a testnet, known without reading the disk, and the last
+  /// reason one could not start.
+  final _chainHas = <String>{};
+  final _chainErrors = <String, String>{};
+
   final _foldAgain = <String>{};
   String? _subtitleSha;
   String _subtitleName = '';
@@ -131,7 +154,10 @@ class CoreService {
     late final CoreService s;
     final manager = NetworkManager(
       backend ?? I2pBackend('$dataDir/i2p'),
-      onChange: () async => s.onPush?.call(await s._state()),
+      onChange: () async {
+        s._background(s._chainResumeAll());
+        s.onPush?.call(await s._state());
+      },
       onEvent: (profileId, e) {
         // A moderator's change reached this admin's relay.
         if (e.kind == kindCollectionChange) s._background(s._foldIncoming(profileId));
@@ -140,6 +166,7 @@ class CoreService {
     s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? dataDir}/Arca');
     await s._loadSettings();
     for (final p in store.profiles) {
+      if (await s._chainConfigFile(p.id).exists()) s._chainHas.add(p.id);
       await s._address(p.id);
       if (s._shouldBeOnline(p)) await s._goOnline(p);
     }
@@ -699,6 +726,10 @@ class CoreService {
               },
             },
       ],
+      'chain': _store.active == null ? null : _chainStates[_activeId],
+      // A testnet chosen but not running yet (the network is still coming up).
+      'chainPending': _store.active != null && _chainHas.contains(_activeId) && !_chainStates.containsKey(_activeId),
+      'chainError': _store.active == null ? null : _chainErrors[_activeId],
       'proposals': _store.active == null ? const [] : await _proposals(_activeId),
       'mySuggestions': _store.active == null ? const [] : await _mySuggestions(_activeId),
     };
@@ -723,6 +754,11 @@ class CoreService {
   /// Handles one request; returns the new state, a result, or an error.
   Future<Map<String, Object?>> handle(String command, Map<String, Object?> args) async {
     try {
+      if (command.startsWith('chain')) {
+        final error = await _chainCommand(command, args);
+        if (error != null) return error;
+        return await _state();
+      }
       switch (command) {
         case 'state':
           break;
@@ -1109,6 +1145,7 @@ class CoreService {
     // for them so nothing writes after close.
     _closing = true;
     await Future.wait(_tasks.toList()).timeout(const Duration(seconds: 30), onTimeout: () => const []);
+    await _chainStop();
     for (final id in _keys.keys.toList()) {
       _forgetKey(id);
     }

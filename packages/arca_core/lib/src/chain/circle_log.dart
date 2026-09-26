@@ -24,6 +24,7 @@ import 'package:crypto/crypto.dart' as c;
 import '../crypto/hex.dart';
 import '../crypto/schnorr.dart';
 import 'merkle.dart';
+import 'signer.dart';
 import 'tx.dart' show canonicalJson;
 
 abstract final class LogType {
@@ -162,6 +163,20 @@ class LogEntry {
     return LogEntry(circle: circle, seq: seq, prev: prev, author: author, type: type, body: body, sig: sig);
   }
 
+  /// Signs through [signer] (the chain isolate asks the core).
+  static Future<LogEntry> signWith(
+    Signer signer, {
+    required String circle,
+    required int seq,
+    required String prev,
+    required String type,
+    Map<String, Object?> body = const {},
+  }) async {
+    final author = signer.publicKey;
+    final sig = toHex(await signer.sign(_idBytes(circle, seq, prev, author, type, body)));
+    return LogEntry(circle: circle, seq: seq, prev: prev, author: author, type: type, body: body, sig: sig);
+  }
+
   /// This entry with one more signature, by [secretKey].
   LogEntry approvedBy(List<int> secretKey) => LogEntry(
     circle: circle,
@@ -277,6 +292,13 @@ class CircleLog {
     for (final a in approvers) {
       e = e.approvedBy(a);
     }
+    append(e);
+    return e;
+  }
+
+  /// [write], signed through [signer]; no co-signers.
+  Future<LogEntry> writeWith(Signer signer, String type, [Map<String, Object?> body = const {}]) async {
+    final e = await LogEntry.signWith(signer, circle: circle, seq: nextSeq, prev: head, type: type, body: body);
     append(e);
     return e;
   }
