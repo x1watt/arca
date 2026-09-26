@@ -46,7 +46,12 @@ Future<void> main(List<String> args) async {
   final dir = args.first;
   final files = args.skip(1).toList();
   Future<CoreService> open(String name) async {
-    final c = await CoreService.open('$dir/$name', startNetwork: false, backend: I2pBackend('$dir/$name/i2p'), defaultBaseFolder: '$dir/$name/Arca');
+    final c = await CoreService.open(
+      '$dir/$name',
+      startNetwork: false,
+      backend: I2pBackend('$dir/$name/i2p'),
+      defaultBaseFolder: '$dir/$name/Arca',
+    );
     return c;
   }
 
@@ -73,17 +78,25 @@ Future<void> main(List<String> args) async {
   }
 
   Map? syncOf(Map<String, Object?> s) =>
-      ((s['following'] as List).cast<Map>().where((x) => x['pubkey'] == aPub).firstOrNull?['synced'] as Map?)?[col] as Map?;
-  List<Map> adminFiles(Map<String, Object?> s) => (((s['collections'] as List).single as Map)['files'] as List).cast<Map>();
+      ((s['following'] as List).cast<Map>().where((x) => x['pubkey'] == aPub).firstOrNull?['synced'] as Map?)?[col]
+          as Map?;
+  List<Map> adminFiles(Map<String, Object?> s) =>
+      (((s['collections'] as List).single as Map)['files'] as List).cast<Map>();
 
   // 1. Keep a copy.
   await f.handle('follow', {'address': aAddress});
   await waitFor(f, (s) => colOf(s) != null, 'F reads the collection from A');
   var t1 = DateTime.now();
   await f.handle('sync', {'owner': aPub, 'collection': col});
-  s = await waitFor(f, (s) => syncOf(s)?['done'] == files.length && syncOf(s)?['running'] == false, 'F copied every file');
+  s = await waitFor(
+    f,
+    (s) => syncOf(s)?['done'] == files.length && syncOf(s)?['running'] == false,
+    'F copied every file',
+  );
   final secs = DateTime.now().difference(t1).inMilliseconds / 1000;
-  say('     ${(total / 1024).toStringAsFixed(0)} KB in ${secs.toStringAsFixed(1)} s = ${(total / 1024 / secs).toStringAsFixed(1)} KB/s');
+  say(
+    '     ${(total / 1024).toStringAsFixed(0)} KB in ${secs.toStringAsFixed(1)} s = ${(total / 1024 / secs).toStringAsFixed(1)} KB/s',
+  );
   final folder = syncOf(s)!['folder'] as String;
   for (final p in files) {
     final name = p.split('/').last;
@@ -93,7 +106,10 @@ Future<void> main(List<String> args) async {
   }
 
   // 2. Moderator edits.
-  await a.handle('setModerators', {'collection': col, 'addresses': [mAddress]});
+  await a.handle('setModerators', {
+    'collection': col,
+    'addresses': [mAddress],
+  });
   await m.handle('follow', {'address': aAddress});
   s = await waitFor(m, (s) => ((colOf(s)?['moderators'] as List?) ?? const []).isNotEmpty, 'M sees it is a moderator');
   final first = (colOf(s)!['files'] as List).cast<Map>().first;
@@ -106,12 +122,19 @@ Future<void> main(List<String> args) async {
   });
   say('M edits a title: ${r['error'] ?? 'sent'}');
   await waitFor(a, (s) => adminFiles(s).any((x) => x['title'] == 'Retitled by the moderator'), 'A folded the edit');
-  await waitFor(f, (s) => ((colOf(s)?['files'] as List?) ?? const []).any((x) => (x as Map)['title'] == 'Retitled by the moderator'),
-      'F sees the edit');
+  await waitFor(
+    f,
+    (s) => ((colOf(s)?['files'] as List?) ?? const []).any((x) => (x as Map)['title'] == 'Retitled by the moderator'),
+    'F sees the edit',
+  );
 
   // 3. Moderator adds a file.
   final extra = File('$dir/from-moderator.txt')..writeAsStringSync('added by the moderator over I2P\n');
-  r = await m.handle('moderate', {'owner': aPub, 'collection': col, 'addPaths': [extra.path]});
+  r = await m.handle('moderate', {
+    'owner': aPub,
+    'collection': col,
+    'addPaths': [extra.path],
+  });
   say('M adds a file: ${r['error'] ?? 'sent'}');
   await waitFor(a, (s) => adminFiles(s).any((x) => x['path'] == 'from-moderator.txt'), 'A fetched it from M');
   await waitFor(f, (s) => (syncOf(s)?['files'] as Map?)?.containsKey('from-moderator.txt') == true, 'F copied it');
@@ -129,12 +152,24 @@ Future<void> main(List<String> args) async {
   final id = r['sent'] as String?;
   say('F suggests a title: ${r['error'] ?? 'sent'}');
   if (id == null) exit(5);
-  await waitFor(m, (s) => (s['proposals'] as List).any((p) => (p as Map)['id'] == id), 'M received the suggestion', poke: m);
+  await waitFor(
+    m,
+    (s) => (s['proposals'] as List).any((p) => (p as Map)['id'] == id),
+    'M received the suggestion',
+    poke: m,
+  );
   r = await m.handle('decide', {'id': id, 'accept': true});
   say('M accepts: ${r['error'] ?? 'done'}');
-  await waitFor(a, (s) => adminFiles(s).any((x) => x['title'] == 'Suggested by the follower'), 'A has the accepted title');
-  await waitFor(f, (s) => (s['mySuggestions'] as List).any((x) => (x as Map)['id'] == id && x['status'] == 'accepted'),
-      'F sees it accepted');
+  await waitFor(
+    a,
+    (s) => adminFiles(s).any((x) => x['title'] == 'Suggested by the follower'),
+    'A has the accepted title',
+  );
+  await waitFor(
+    f,
+    (s) => (s['mySuggestions'] as List).any((x) => (x as Map)['id'] == id && x['status'] == 'accepted'),
+    'F sees it accepted',
+  );
 
   // 5. F is not a moderator.
   r = await f.handle('moderate', {

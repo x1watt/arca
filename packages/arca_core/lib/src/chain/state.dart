@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import '../crypto/hex.dart';
+import 'circle_log.dart' show governanceMessage, PayoutTable;
+import '../crypto/schnorr.dart';
 import 'merkle.dart';
 import 'mining.dart';
 import 'params.dart';
@@ -18,7 +20,8 @@ class CircleState {
   CircleState({required this.admin, required this.name, this.pool = 0, List<String>? moderators})
     : moderators = moderators ?? [];
 
-  final String admin;
+  /// Replaced only by a majority of moderators; '' when there is none.
+  String admin;
   final String name;
   final List<String> moderators;
 
@@ -33,6 +36,9 @@ class CircleState {
   String payoutRoot = '';
   int anchoredAt = -1;
 
+  /// Grains each member has claimed from the pool so far.
+  final claimed = <String, int>{};
+
   bool mayAnchor(String key) => key == admin || moderators.contains(key);
 
   Map<String, Object?> toJson() => {
@@ -45,6 +51,7 @@ class CircleState {
     'memberRoot': memberRoot,
     'payoutRoot': payoutRoot,
     'anchoredAt': anchoredAt,
+    'claimed': claimed,
   };
 
   CircleState copy() => CircleState(admin: admin, name: name, pool: pool, moderators: [...moderators])
@@ -52,7 +59,8 @@ class CircleState {
     ..dataRoot = dataRoot
     ..memberRoot = memberRoot
     ..payoutRoot = payoutRoot
-    ..anchoredAt = anchoredAt;
+    ..anchoredAt = anchoredAt
+    ..claimed.addAll(claimed);
 }
 
 /// A collection as the chain knows it: its circle, the partitions its
@@ -143,6 +151,10 @@ class ChainState {
     s.balances.addAll(allocations);
     s.issued = allocations.values.fold(0, (a, b) => a + b);
     s.circles.addAll(circles);
+    // Genesis counts as the first anchor of the genesis circles.
+    for (final c in circles.values) {
+      if (c.anchoredAt < 0) c.anchoredAt = genesisTick;
+    }
     s.collections.addAll(collections);
     return s;
   }
@@ -196,21 +208,46 @@ class ChainState {
         burned += params.circleFee;
         circles[id] = CircleState(admin: tx.from, name: (b['name'] as String? ?? id).trim());
       case TxType.anchor:
-        final circle = circles[b['circle']];
+        final id = b['circle'] as String? ?? '';
+        final circle = circles[id];
         if (circle == null) throw const ChainError('no such circle');
         if (!circle.mayAnchor(tx.from)) throw const ChainError('only the admin or a moderator anchors');
+        _governance(id, circle, tx, b);
+        for (final root in ['logHead', 'dataRoot', 'memberRoot', 'payoutRoot']) {
+          final v = b[root] as String? ?? '';
+          if (v.isNotEmpty && !RegExp(r'^[0-9a-f]{64}$').hasMatch(v)) throw ChainError('bad $root');
+        }
         circle
           ..logHead = b['logHead'] as String? ?? ''
           ..dataRoot = b['dataRoot'] as String? ?? ''
           ..memberRoot = b['memberRoot'] as String? ?? ''
           ..payoutRoot = b['payoutRoot'] as String? ?? ''
           ..anchoredAt = tick;
-        if (b['moderators'] case final List mods) {
-          if (tx.from != circle.admin) throw const ChainError('only the admin sets moderators');
-          circle.moderators
-            ..clear()
-            ..addAll(mods.cast<String>());
+        if (b['collections'] case final Map listed) _listCollections(id, listed);
+      case TxType.claim:
+        final id = b['circle'] as String? ?? '';
+        final circle = circles[id];
+        if (circle == null) throw const ChainError('no such circle');
+        final total = b['total'] as int? ?? 0;
+        final List<ProofStep> path;
+        try {
+          path = [
+            for (final step in b['path'] as List) (fromHex((step as List)[0] as String), step[1] as bool),
+          ];
+        } catch (_) {
+          throw const ChainError('bad proof');
         }
+        final leaf = PayoutTable.leaf(id, tx.from, total);
+        if (circle.payoutRoot.isEmpty ||
+            !merkleVerifyAt(leaf, b['index'] as int? ?? -1, b['count'] as int? ?? 0, path, fromHex(circle.payoutRoot))) {
+          throw const ChainError('not in the circle\'s payout table');
+        }
+        final owed = total - (circle.claimed[tx.from] ?? 0);
+        if (owed <= 0) throw const ChainError('nothing left to claim');
+        if (circle.pool < owed) throw ChainError('the pool holds ${circle.pool}, the claim is $owed');
+        circle.pool -= owed;
+        circle.claimed[tx.from] = total;
+        balances[tx.from] = balanceOf(tx.from) + owed;
       case TxType.declare:
         final circle = b['circle'] as String? ?? '';
         if (!circles.containsKey(circle)) throw const ChainError('no such circle');
@@ -236,19 +273,6 @@ class ChainState {
           declarations.remove(tx.from);
           declaredOn.remove(tx.from);
         }
-      case TxType.collection:
-        final id = b['collection'] as String? ?? '';
-        final circle = circles[b['circle']];
-        if (!RegExp(r'^[a-z0-9][a-z0-9-]{2,62}$').hasMatch(id)) throw const ChainError('bad collection id');
-        if (circle == null) throw const ChainError('no such circle');
-        if (!circle.mayAnchor(tx.from)) throw const ChainError('only the admin or a moderator lists collections');
-        final existing = collections[id];
-        if (existing != null && existing.circle != b['circle']) throw const ChainError('collection of another circle');
-        final parts = (b['partitions'] as List? ?? const []).cast<int>().toSet().toList();
-        if (parts.any((p) => p < 0 || partitionSizes.isNotEmpty && p >= partitionSizes.length)) {
-          throw const ChainError('no such partition');
-        }
-        collections[id] = CollectionState(circle: b['circle'] as String, partitions: parts, seed: existing?.seed ?? 0);
       case TxType.burn:
         final amount = b['amount'] as int? ?? 0;
         if (amount <= 0) throw const ChainError('amount must be positive');
@@ -299,6 +323,71 @@ class ChainState {
     settleDay(this, day);
     day = newDay;
     beacon = head;
+  }
+
+  /// Admin and moderator changes an anchor carries (rules 2 and 6 of the
+  /// whitepaper's section 4): the admin appoints moderators; removing one or
+  /// replacing the admin takes a majority of the current moderators, who
+  /// sign [governanceMessage] over the new admin and moderators.
+  void _governance(String id, CircleState circle, Tx tx, Map<String, Object?> b) {
+    if (!b.containsKey('admin') && !b.containsKey('moderators')) return;
+    final admin = b.containsKey('admin') ? b['admin'] as String? ?? '' : circle.admin;
+    final mods = b.containsKey('moderators')
+        ? (b['moderators'] as List? ?? const []).cast<String>().toSet().toList()
+        : [...circle.moderators];
+    final key = RegExp(r'^[0-9a-f]{64}$');
+    if ((admin.isNotEmpty && !key.hasMatch(admin)) || mods.any((m) => !key.hasMatch(m))) {
+      throw const ChainError('bad key');
+    }
+    if (mods.length > 64) throw const ChainError('at most 64 moderators');
+    final removes = circle.moderators.any((m) => !mods.contains(m));
+    if (admin != circle.admin || removes) {
+      final msg = governanceMessage(id, admin, mods);
+      final approvals = (b['approvals'] as Map? ?? const {}).cast<String, String>();
+      var agree = 0;
+      for (final m in circle.moderators) {
+        final sig = approvals[m];
+        try {
+          if (sig != null && schnorrVerify(fromHex(m), msg, fromHex(sig))) agree++;
+        } catch (_) {}
+      }
+      if (agree * 2 <= circle.moderators.length) {
+        throw ChainError('needs a majority of the ${circle.moderators.length} moderators, has $agree');
+      }
+    } else if (mods.length != circle.moderators.length && tx.from != circle.admin) {
+      throw const ChainError('only the admin appoints moderators');
+    }
+    circle
+      ..admin = admin
+      ..moderators.clear()
+      ..moderators.addAll(mods);
+  }
+
+  /// The circle's public collections as its anchor lists them, replacing
+  /// the ones it listed before. Seeds stay with their collections.
+  void _listCollections(String circle, Map listed) {
+    if (listed.length > 256) throw const ChainError('at most 256 collections per anchor');
+    final next = <String, CollectionState>{};
+    for (final e in listed.entries) {
+      final id = '${e.key}';
+      if (!RegExp(r'^[a-z0-9][a-z0-9-]{2,62}$').hasMatch(id)) throw const ChainError('bad collection id');
+      final existing = collections[id];
+      if (existing != null && existing.circle != circle) throw const ChainError('collection of another circle');
+      final parts = (e.value as List? ?? const []).cast<int>().toSet().toList();
+      if (parts.any((p) => p < 0 || partitionSizes.isNotEmpty && p >= partitionSizes.length)) {
+        throw const ChainError('no such partition');
+      }
+      next[id] = CollectionState(circle: circle, partitions: parts, seed: existing?.seed ?? 0);
+    }
+    collections
+      ..removeWhere((_, c) => c.circle == circle)
+      ..addAll(next);
+  }
+
+  /// Whether [circle] anchored recently enough at [atTick] to earn.
+  bool isLive(String circle, int atTick) {
+    final c = circles[circle];
+    return c != null && c.anchoredAt >= 0 && atTick - c.anchoredAt <= params.anchorLifeTicks;
   }
 
   /// Whether [key] belongs to [circle]: its admin, a moderator, or a

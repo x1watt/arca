@@ -13,7 +13,9 @@
 // from the day before, so it flows outward one hop per day.
 //
 // Every payment goes to the pool of the circle the steward's declaration
-// names. What nobody earned is never created.
+// names. A circle whose last anchor is more than a day old at the end of
+// the day is cut off: its pool earns nothing and its collections earn no
+// interest. What nobody earned is never created.
 
 import 'params.dart';
 import 'state.dart';
@@ -35,6 +37,8 @@ BigInt curveShare(BigInt amount, int keepers) =>
 /// missed a proof were dropped.
 void settleDay(ChainState s, int day) {
   final issuance = s.params.issuanceOn(day);
+  final dayEnd = s.genesisTick + (day + 1) * s.params.dayTicks;
+  final live = {for (final c in s.circles.keys) c: s.isLive(c, dayEnd)};
   final storageBudget = BigInt.from(issuance * ChainParams.storageShare ~/ 100);
   final interestBudget = BigInt.from(issuance * ChainParams.interestShare ~/ 100);
 
@@ -61,7 +65,7 @@ void settleDay(ChainState s, int day) {
       final keepers = provers[p]!;
       final each = storageBudget * weights[p]! ~/ total ~/ BigInt.from(keepers.length);
       for (final steward in keepers) {
-        _pay(s, s.declarations[steward]![p]!, each.toInt());
+        _pay(s, live, s.declarations[steward]![p]!, each.toInt());
       }
     }
   }
@@ -71,7 +75,7 @@ void settleDay(ChainState s, int day) {
   final keptCount = <String, int>{};
   for (final id in (s.collections.keys.toList()..sort())) {
     final parts = s.collections[id]!.partitions;
-    if (parts.isEmpty) continue;
+    if (parts.isEmpty || live[s.collections[id]!.circle] != true) continue;
     final keepers = [
       for (final steward in provers[parts.first] ?? const <String>[])
         if (parts.every((p) => provers[p]?.contains(steward) ?? false)) steward,
@@ -110,7 +114,7 @@ void settleDay(ChainState s, int day) {
     for (final key in keys) {
       final (steward, id) = key;
       final circle = s.declarations[steward]![s.collections[id]!.partitions.first]!;
-      _pay(s, circle, (interestBudget * shares[key]! ~/ sum).toInt());
+      _pay(s, live, circle, (interestBudget * shares[key]! ~/ sum).toInt());
     }
   }
   s.standing
@@ -124,9 +128,9 @@ void settleDay(ChainState s, int day) {
   }
 }
 
-void _pay(ChainState s, String circle, int amount) {
+void _pay(ChainState s, Map<String, bool> live, String circle, int amount) {
   final c = s.circles[circle];
-  if (c == null || amount <= 0) return;
+  if (c == null || amount <= 0 || live[circle] != true) return;
   c.pool += amount;
   s.issued += amount;
 }

@@ -9,6 +9,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:arca_core/arca_core.dart';
+import 'package:arca_core/src/chain/circle_log.dart';
 import 'package:arca_core/src/chain/corpus.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/node.dart';
@@ -17,10 +18,11 @@ import 'package:arca_core/src/chain/state.dart';
 import 'package:arca_core/src/chain/tx.dart';
 import 'package:test/test.dart';
 
-const p = ChainParams(
+/// Days of 50 ticks: about five of them per run.
+ChainParams params(int tickMillis) => ChainParams(
   name: 'test',
   partitionChunks: 4,
-  tickMillis: 20,
+  tickMillis: tickMillis,
   dayTicks: 50,
   blockTicks: 2,
   packMemoryKiB: 64,
@@ -32,17 +34,19 @@ const p = ChainParams(
 );
 
 void main() {
-  for (final (drop, latency) in [(0.0, 0), (0.3, 0), (0.3, 60)]) {
+  // With late messages, ticks are longer (the same five days take twice
+  // as long), so a busy machine still fits a holding proof into each day.
+  for (final (drop, latency, tick) in [(0.0, 0, 20), (0.3, 0, 20), (0.3, 60, 40)]) {
     test(
       'stewards mine, prove their keeping every day, agree on one chain; a false claim is dropped '
       '(${(drop * 100).round()}% of messages lost, up to $latency ms late)',
-      () => run(drop, Duration(milliseconds: latency)),
+      () => run(drop, Duration(milliseconds: latency), params(tick)),
       timeout: const Timeout(Duration(minutes: 2)),
     );
   }
 }
 
-Future<void> run(double drop, Duration latency) async {
+Future<void> run(double drop, Duration latency, ChainParams p) async {
   final tmp = await Directory.systemTemp.createTemp('arca_chain');
   final rng = Random(9);
   final files = <String, String>{};
@@ -57,10 +61,22 @@ Future<void> run(double drop, Duration latency) async {
   final corpus = Corpus.build(p, chunked);
   expect(corpus.partitions, greaterThanOrEqualTo(3));
   final faucet = generateSecretKey();
+  final names = ['a', 'b', 'c', 'liar'];
+  final keys = [for (final _ in names) generateSecretKey()];
+  // Steward a administers the commons: its circle log lists one collection
+  // per partition, and its node anchors the log so the circle keeps earning.
+  final log = CircleLog('commons', admin: toHex(publicKeyOf(keys[0])));
+  log.write(keys[0], LogType.appoint, {'key': toHex(publicKeyOf(keys[0]))});
+  for (var i = 0; i < corpus.partitions; i++) {
+    log.write(keys[0], LogType.collection, {
+      'id': 'part-$i',
+      'partitions': [i],
+    });
+  }
   final genesis = ChainState.genesis(
     p,
     allocations: {toHex(publicKeyOf(faucet)): 1000 * ChainParams.grainsPerMarca},
-    circles: {'commons': CircleState(admin: toHex(publicKeyOf(faucet)), name: 'Arca Commons')},
+    circles: {'commons': CircleState(admin: toHex(publicKeyOf(keys[0])), name: 'Arca Commons')},
     // One seeded collection per partition, so the interest budget pays too.
     collections: {
       for (var i = 0; i < corpus.partitions; i++)
@@ -71,10 +87,9 @@ Future<void> run(double drop, Duration latency) async {
     genesisTick: DateTime.now().millisecondsSinceEpoch ~/ p.tickMillis,
   );
   final net = LoopbackNetwork(dropRate: drop, latency: latency, seed: 3);
-  final names = ['a', 'b', 'c', 'liar'];
   final nodes = <ChainNode>[];
   for (final n in names) {
-    final key = generateSecretKey();
+    final key = keys[names.indexOf(n)];
     final steward = Steward(
       params: p,
       key: toHex(publicKeyOf(key)),
@@ -84,14 +99,16 @@ Future<void> run(double drop, Duration latency) async {
     );
     nodes.add(
       ChainNode(
-        params: p,
-        genesis: genesis,
-        address: n,
-        link: net.link([n]),
-        secretKey: key,
-        steward: steward,
-        peers: names,
-      )..log = Platform.environment['ARCA_CHAIN_LOG'] == null ? null : (m) => print('$n: $m'),
+          params: p,
+          genesis: genesis,
+          address: n,
+          link: net.link([n]),
+          secretKey: key,
+          steward: steward,
+          peers: names,
+        )
+        ..log = (Platform.environment['ARCA_CHAIN_LOG'] == null ? null : (m) => print('$n: $m'))
+        ..anchorBody = (n == 'a' ? (_) => log.anchorBody() : null),
     );
   }
   // The honest stewards pack a partition each; the liar packs nothing.
@@ -113,7 +130,7 @@ Future<void> run(double drop, Duration latency) async {
   });
 
   // About four "days".
-  await Future<void>.delayed(const Duration(seconds: 5));
+  await Future<void>.delayed(Duration(milliseconds: 250 * p.tickMillis));
   // Stop mining but keep listening, so the last blocks reach everyone.
   for (final n in nodes) {
     n.mining = false;
@@ -140,6 +157,8 @@ Future<void> run(double drop, Duration latency) async {
   final days = s.circles['commons']!.pool / p.issuanceOn(0);
   expect((days - days.round()).abs(), lessThan(1e-6), reason: 'whole days of issuance, $days');
   expect(days.round(), inInclusiveRange(s.day - 2, s.day - 1));
+  expect(s.circles['commons']!.logHead, log.head, reason: 'the circle\'s log is anchored');
+  expect(s.day - s.dayOf(s.circles['commons']!.anchoredAt), lessThanOrEqualTo(1));
   for (var i = 0; i < 3; i++) {
     expect(s.declarations[nodes[i].key], {i: 'commons'}, reason: 'steward $i proved its keeping every day');
   }

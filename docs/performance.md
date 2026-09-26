@@ -164,6 +164,7 @@ A steward's mining read is cheap (one 1 KB read per declared partition per tick)
 - Chain traffic is bounded: a node asks one peer per block interval for news, a `get` is answered with at most 64 blocks, and a burst of orphans from one peer asks once per tick. Catching up after a long absence takes several rounds by design, not one flood.
 - A producer checks each transaction once: it applies it to a copy of the state and keeps that copy, instead of trying it on a copy and then applying it again, which cost every holding proof two Argon2id.
 - The first block of each day settles the day before: one pass over every steward's declarations and every collection's keepers, in integer arithmetic. Cheap on the testnet; at mainnet size (millions of declarations) it must be measured before launch, and may need to be spread over the day's first blocks.
+- A circle log is checked entry by entry, each with one or more Schnorr signatures in plain Dart. A device keeps the folded log and checks only new entries; replaying a long log from the start is for a new device, off the UI isolate.
 
 ---
 

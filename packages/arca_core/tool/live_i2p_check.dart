@@ -11,8 +11,11 @@ Future<void> main(List<String> args) async {
   final dir = args.isNotEmpty ? args.first : (await Directory.systemTemp.createTemp('arca_live')).path;
   final t0 = DateTime.now();
   String t() => '${DateTime.now().difference(t0).inSeconds}s';
-  final core = await CoreService.open(dir,
-      startNetwork: false, backend: I2pBackend('$dir/i2p', log: (m) => stdout.writeln('  [i2p ${t()}] $m')));
+  final core = await CoreService.open(
+    dir,
+    startNetwork: false,
+    backend: I2pBackend('$dir/i2p', log: (m) => stdout.writeln('  [i2p ${t()}] $m')),
+  );
   var s = await core.handle('create', {'name': 'B'});
   final ids = [for (final p in s['profiles'] as List) (p as Map)['id'] as String];
   await core.handle('stayOnline', {'id': ids[1], 'on': true});
@@ -26,7 +29,9 @@ Future<void> main(List<String> args) async {
   // Lease sets need a moment to reach the floodfills.
   for (var attempt = 1; attempt <= 6; attempt++) {
     print('${t()} B queries A, attempt $attempt');
-    final got = await b.query(a.address, [const NostrFilter(kinds: [0])], timeout: const Duration(seconds: 45));
+    final got = await b.query(a.address, [
+      const NostrFilter(kinds: [0]),
+    ], timeout: const Duration(seconds: 45));
     if (got.isNotEmpty) {
       print('${t()} SUCCESS: got "${got.single.content}", signature valid: ${got.single.verify()}');
       await core.close();

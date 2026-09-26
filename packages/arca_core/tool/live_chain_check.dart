@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:arca_core/arca_core.dart';
+import 'package:arca_core/src/chain/circle_log.dart';
 import 'package:arca_core/src/chain/corpus.dart';
 import 'package:arca_core/src/chain/mining.dart';
 import 'package:arca_core/src/chain/node.dart';
@@ -84,6 +85,16 @@ Future<void> main(List<String> args) async {
     keys.add(decodeEntity((await c.handle('exportNsec', {'id': id}))['nsec'] as String, 'nsec'));
   }
   say('network up: ${addresses.map((a) => a.substring(0, 8)).join(', ')}');
+  // Steward a administers the commons: its log lists one public
+  // collection per partition, and its node anchors it about hourly.
+  final log = CircleLog('commons', admin: toHex(publicKeyOf(keys[0])));
+  log.write(keys[0], LogType.appoint, {'key': toHex(publicKeyOf(keys[0]))});
+  for (var i = 0; i < corpus.partitions; i++) {
+    log.write(keys[0], LogType.collection, {
+      'id': 'part-$i',
+      'partitions': [i],
+    });
+  }
   final genesis = ChainState.genesis(
     live,
     circles: {'commons': CircleState(admin: toHex(publicKeyOf(keys[0])), name: 'Arca Commons')},
@@ -110,14 +121,16 @@ Future<void> main(List<String> args) async {
     say('steward ${'abc'[i]} packed partition $i in ${sw.elapsedMilliseconds} ms');
     nodes.add(
       ChainNode(
-        params: live,
-        genesis: genesis,
-        address: addresses[i],
-        link: cores[i].net.backend.link,
-        secretKey: keys[i],
-        steward: steward,
-        peers: addresses,
-      )..log = (m) => logs.writeln('${DateTime.now().difference(t0).inSeconds}s ${'abc'[i]}: $m'),
+          params: live,
+          genesis: genesis,
+          address: addresses[i],
+          link: cores[i].net.backend.link,
+          secretKey: keys[i],
+          steward: steward,
+          peers: addresses,
+        )
+        ..anchorBody = (i == 0 ? (_) => log.anchorBody() : null)
+        ..log = (m) => logs.writeln('${DateTime.now().difference(t0).inSeconds}s ${'abc'[i]}: $m'),
     );
   }
   for (final n in nodes) {
@@ -159,7 +172,11 @@ Future<void> main(List<String> args) async {
   }
   final pool = s.circles['commons']!.pool / live.issuanceOn(0);
   say('the pool holds ${pool.toStringAsFixed(4)} days of issuance');
+  say(
+    'commons anchored at day ${s.dayOf(s.circles['commons']!.anchoredAt)}, log head ${s.circles['commons']!.logHead == log.head ? 'matches' : 'DIFFERS'}',
+  );
   final ok =
+      s.circles['commons']!.logHead == log.head &&
       heads.length == 1 &&
       roots.length == 1 &&
       s.declarations.length == 3 &&

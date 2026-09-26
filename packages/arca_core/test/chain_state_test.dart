@@ -27,7 +27,7 @@ void main() {
     await expectLater(() => s.apply(forged), throwsA(predicate((e) => '$e'.contains('signature'))));
   });
 
-  test('creating a circle burns the fee; only its admin sets moderators; admin and moderators anchor', () async {
+  test('creating a circle burns the fee; only its admin appoints moderators; admin and moderators anchor', () async {
     final s = genesis();
     await s.apply(Tx.sign(alice, TxType.createCircle, 0, {'circle': 'radio-archive', 'name': 'Radio archive'}));
     expect(s.burned, p.circleFee);
@@ -39,15 +39,15 @@ void main() {
     await s.apply(
       Tx.sign(alice, TxType.anchor, 1, {
         'circle': 'radio-archive',
-        'logHead': 'h1',
+        'logHead': 'a' * 64,
         'moderators': [pk(bob)],
       }),
     );
-    await s.apply(Tx.sign(bob, TxType.anchor, 0, {'circle': 'radio-archive', 'logHead': 'h2'}));
-    expect(s.circles['radio-archive']!.logHead, 'h2');
+    await s.apply(Tx.sign(bob, TxType.anchor, 0, {'circle': 'radio-archive', 'logHead': 'b' * 64}));
+    expect(s.circles['radio-archive']!.logHead, 'b' * 64);
     await expectLater(
       () => s.apply(Tx.sign(bob, TxType.anchor, 1, {'circle': 'radio-archive', 'moderators': <String>[]})),
-      throwsA(predicate((e) => '$e'.contains('only the admin'))),
+      throwsA(predicate((e) => '$e'.contains('majority'))),
     );
     await expectLater(
       () => s.apply(Tx.sign(producer, TxType.anchor, 0, {'circle': 'radio-archive'})),

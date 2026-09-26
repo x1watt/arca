@@ -74,6 +74,10 @@ class ChainNode {
   /// While false the node follows the chain and relays, but does not mine.
   bool mining = true;
 
+  /// The anchor this node posts for a circle it administers or moderates
+  /// (normally [CircleLog.anchorBody]); null to skip that circle.
+  Map<String, Object?>? Function(String circle)? anchorBody;
+
   /// Diagnostics: rejected blocks, orphans, forks switched.
   void Function(String message)? log;
 
@@ -277,6 +281,7 @@ class ChainNode {
       final head = state;
       final mine = steward == null ? const <int, String>{} : (head.declarations[key] ?? const <int, String>{});
       _holdingProofs(head, mine, tick);
+      _anchor(head, tick);
       final needsProof = head.corpusRoot.isNotEmpty && head.declarations.isNotEmpty;
       Map<String, Object?> proof = const {};
       if (needsProof) {
@@ -323,6 +328,22 @@ class ChainNode {
       size += n;
     }
     return out;
+  }
+
+  /// Anchors each circle this node may anchor about once per
+  /// [ChainParams.anchorTicks], so it keeps earning.
+  void _anchor(ChainState head, int tick) {
+    final body = anchorBody;
+    if (body == null) return;
+    for (final e in head.circles.entries) {
+      if (!e.value.mayAnchor(key) || tick - e.value.anchoredAt < params.anchorTicks) continue;
+      final waiting = _mempool.values.any(
+        (t) => t.type == TxType.anchor && t.from == key && t.body['circle'] == e.key,
+      );
+      if (waiting) continue;
+      final b = body(e.key);
+      if (b != null) submit(TxType.anchor, {...b, 'circle': e.key});
+    }
   }
 
   final _proving = <String>{};

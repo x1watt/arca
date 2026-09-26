@@ -38,6 +38,14 @@ class ChainParams {
 
   int get blocksPerDay => dayTicks ~/ blockTicks;
 
+  /// How often a circle anchors its log: about hourly, and never more
+  /// often than every five blocks.
+  int get anchorTicks => dayTicks ~/ 24 > blockTicks * 5 ? dayTicks ~/ 24 : blockTicks * 5;
+
+  /// A circle whose last anchor is older than this is cut off: its pool
+  /// earns nothing and its collections earn no interest (section 4).
+  int get anchorLifeTicks => dayTicks;
+
   /// New marcas on [day]: halving every [halvingDays], never below the floor.
   int issuanceOn(int day) {
     final halvings = day ~/ halvingDays;

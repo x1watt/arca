@@ -389,7 +389,7 @@ The model download is the one connection that does not go over I2P: a plain HTTP
 
 The chain and marcas follow the whitepaper (sections 6 to 9) and are built in milestones on a testnet first: the same rules with smaller numbers (a "day" of 10 minutes, partitions of 64 MB). Constants are in `packages/arca_core/lib/src/chain/params.dart`, one set per network; nothing else sets them.
 
-Built so far (milestones 1 to 4):
+Built so far (milestones 1 to 5):
 
 - **Corpus** (`chain/corpus.dart`).
   - Files are cut into 256 KB chunks; each chunk is a Merkle tree of 1 KB slices.
@@ -407,7 +407,9 @@ Built so far (milestones 1 to 4):
   - Types so far:
     - `transfer`;
     - `createCircle`, which burns the circle fee;
-    - `anchor`, by the circle's admin or a moderator; only the admin sets moderators;
+    - `anchor`, by the circle's admin or a moderator (see circles below);
+    - `claim`, a member's payout from its circle's pool;
+    - `burn`, optionally for a collection;
     - `declare` and `undeclare` of partitions for a circle.
   - The state holds balances, nonces, circles with their pools and latest anchors, declarations, and burned and issued totals. It is committed as one Merkle root over its sorted entries.
 - **Blocks** (`chain/block.dart`).
@@ -429,7 +431,7 @@ Built so far (milestones 1 to 4):
   - Blocks create no marcas. A day's issuance is paid as the day closes (in the first block of the next day), to the stewards who proved their keeping that day, into the pool of the circle each declaration names. What nobody earned is never created.
   - **Storage budget, 30%:** split over the proven partitions by size times the replication curve, and within a partition equally among its provers.
   - **Replication curve:** n copies earn together `min(n, 10)^2 / 100` of what ten copies earn. One copy earns a hundredth; each copy earns more up to ten; from the eleventh the total is frozen and split among all.
-  - **Collections on the chain:** a `collection` transaction, by the circle's admin or a moderator, names a collection and the partitions its files are in; genesis corpora carry a seed of interest. A steward keeps a collection on a day when it proved all of its partitions. (Milestone 5 derives this from the anchored circle logs instead.)
+  - **Collections on the chain** come from the circles' anchors (below); genesis corpora carry a seed of interest. A steward keeps a collection on a day when it proved all of its partitions.
   - **Interest budget, 70%:** a collection's interest is its seed, plus the marcas non-members burned for it over the last 30 days (`burn` transaction naming the collection; members are the admin, moderators and the circle's own stewards), plus a third of the standing of each keeper from another circle divided by the number of collections that keeper keeps. Each keeper's share of that interest follows the replication curve; a steward's standing is the sum of its shares, and the budget is paid in proportion to it.
   - Standing is recomputed as each day closes from the standing of the day before, so it flows outward one hop per day. A steward that misses a proof loses its standing with its declarations.
   - Checked against the whitepaper's claims (`test/chain_rewards_test.dart`): a circle keeping only its own archive earns storage and no interest; burns by members count for nothing; a ring of circles keeping each other's junk, besides the real data, reaches 1.125 times an honest steward's standing with two circles and 1.286 times with five, under the 1.5 cap. Over live I2P (three stewards, one seeded collection per partition) every closed day paid exactly its issuance into the circle's pool, and each lone keeper's standing was a hundredth of its collection's seed, as the curve says.
@@ -441,7 +443,16 @@ Built so far (milestones 1 to 4):
   - As a steward, it mines each tick and posts its holding proof early each day by itself.
   - Tested in process (three stewards and one that declares a partition it does not keep: it is dropped on the next day, the others agree on one head and state root) on a loopback network that loses 30% of messages and delays them up to three ticks, and over live I2P (`tool/live_chain_check.dart`): three nodes on this desktop with 1 s ticks, 5-tick blocks and 60-tick days ran 64 blocks over five days, with the same head at every sample, all three stewards proving every day, and seven fork switches, all healed within a block or two. The first run, before the resync and the locator, failed: the stewards whose `declare` was lost never got in, and a node stayed on its own fork.
 
-Next: circle logs and pool payouts (5), passes and light clients (6), and the wallet (7).
+- **Circles** (`chain/circle_log.dart`, milestone 5).
+  - A circle's log is an append-only chain of signed entries, each naming the one before: policy, moderators appointed and removed, admin replaced, members joining, admitted and excluded, collections listed and removed, and the payout table. It carries no money and needs no mining. Replaying it from the start checks every rule and reaches the same head and roots on any device.
+  - The rules as the log enforces them (whitepaper, section 4): the admin appoints moderators and sets the policy, nothing else; moderators admit and exclude members and accept collections with as many moderator signatures as the approvals dial asks; a majority of moderators removes a moderator or replaces the admin, and the admin cannot remove moderators; with neither admin nor moderators the circle is frozen. Joining is open (a newcomer signs its own `join`) or by admission, per the policy.
+  - Co-signatures: an entry that needs several moderators carries their signatures over its id besides the author's.
+  - About once an hour (`anchorTicks`) a moderator's node anchors the log: its head, the member root, the root of the public collections, the payout root, and the public collections with their partitions, which replace what the circle listed before. Closed collections never reach the chain. Admin and moderator changes travel in the anchor: appointing takes the admin; removing a moderator or replacing the admin takes signatures from a majority of the current moderators over the new admin and moderator list.
+  - A circle whose last anchor is more than a day old is cut off: its pool earns nothing and its collections earn no interest. Mining stays open to every steward whatever its circle, so a chain where every circle lapsed can still include the anchors that bring them back. Genesis counts as the genesis circles' first anchor.
+  - Payouts: the admin's software splits what the pool earned by the policy (45% stewards, 45% contributors, 10% moderators by default; `distribute`) into cumulative totals per member, written to the log as a payout entry that can only grow. The anchor commits them as a Merkle root; a member's `claim` shows its leaf and receives its total minus what it claimed before. A claim above the table, someone else's line, or more than the pool holds fails.
+  - Not yet: the review queue, quotas and the disconnected-circle fallback act only once passes exist (milestone 6); log entries travel between devices with the rest of the collaboration events when the chain moves into the core (milestone 7). Removed collections leave the chain at once; the whitepaper's 30-day grace period is still to do.
+
+Next: passes and light clients (6), and the wallet (7).
 
 ## 11. Open questions
 

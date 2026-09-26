@@ -33,8 +33,12 @@ void keep(ChainState s, String steward, String circle, List<int> partitions) {
   }
 }
 
-/// Everyone proves everything today; the day closes.
-void proveAndClose(ChainState s) {
+/// Everyone proves everything today; every circle anchored in time unless
+/// listed in [lapsed]; the day closes.
+void proveAndClose(ChainState s, {Set<String> lapsed = const {}}) {
+  for (final e in s.circles.entries) {
+    if (!lapsed.contains(e.key)) e.value.anchoredAt = s.genesisTick + (s.day + 1) * p.dayTicks - 1;
+  }
   for (final e in s.declarations.entries) {
     for (final q in e.value.keys) {
       (s.provenOn[e.key] ??= {})[q] = s.day;
@@ -119,6 +123,29 @@ void main() {
     proveAndClose(s);
     expect(s.standing['k'], isNull, reason: 'after 30 days the burn no longer counts');
     expect(s.burnsFor, isEmpty);
+  });
+
+  test('a circle that stopped anchoring earns nothing, and its collections earn no interest', () {
+    final s = library(
+      circles: ['wiki', 'x'],
+      partitionSizes: [256, 256],
+      collections: {
+        'wikipedia': CollectionState(circle: 'wiki', partitions: [0], seed: 1000 * m),
+      },
+    );
+    keep(s, 'a', 'x', [0]); // keeps Wikipedia for x
+    keep(s, 'b', 'wiki', [1]);
+    proveAndClose(s); // day 0: both live
+    final x0 = pool(s, 'x'), wiki0 = pool(s, 'wiki');
+    expect(x0, greaterThan(0));
+    proveAndClose(s, lapsed: {'x'}); // day 1: x missed its anchors
+    expect(pool(s, 'x'), x0, reason: 'x is cut off');
+    expect(pool(s, 'wiki'), greaterThan(wiki0));
+    final wiki1 = pool(s, 'wiki');
+    proveAndClose(s, lapsed: {'wiki'}); // day 2: x is back, wiki is cut off
+    expect(pool(s, 'wiki'), wiki1, reason: 'wiki is cut off now');
+    expect(s.standing, isEmpty, reason: 'a cut-off circle\'s collections earn no interest');
+    expect(pool(s, 'x'), x0 + p.issuanceOn(2) * ChainParams.storageShare ~/ 100 ~/ 2, reason: 'x earns storage again');
   });
 
   test('a steward that misses a proof loses its standing', () {

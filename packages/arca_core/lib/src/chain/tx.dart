@@ -22,10 +22,6 @@ abstract final class TxType {
   static const undeclare = 'undeclare';
   static const holdingProof = 'holdingProof';
 
-  /// A circle's admin or a moderator lists a collection and the
-  /// partitions its files are in.
-  static const collection = 'collection';
-
   /// Destroys marcas, optionally for a collection (its interest).
   static const burn = 'burn';
 
