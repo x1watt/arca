@@ -107,7 +107,11 @@ class Collection {
     this.circle = Commons.id,
     this.cover,
     List<LibraryFile>? files,
-  }) : files = files ?? [];
+    List<Map<String, String>>? moderators,
+    List<String>? applied,
+  }) : files = files ?? [],
+       moderators = moderators ?? [],
+       applied = applied ?? [];
 
   final String id;
   String name;
@@ -123,6 +127,17 @@ class Collection {
   /// one the collection shows as a folder.
   String? cover;
 
+  /// People the admin appointed to change this collection: `pubkey` and
+  /// `address` (docs/architecture.md, 4.7).
+  final List<Map<String, String>> moderators;
+
+  /// Ids of moderators' changes (kind 4782) already folded into the files,
+  /// newest last, at most [maxApplied].
+  final List<String> applied;
+  static const maxApplied = 500;
+
+  bool isModerator(String pubkey) => moderators.any((m) => m['pubkey'] == pubkey);
+
   int get size => files.fold(0, (n, f) => n + f.size);
 
   Map<String, Object> toJson() => {
@@ -133,6 +148,8 @@ class Collection {
     'folder': folder,
     'createdAt': createdAt,
     'cover': ?cover,
+    if (moderators.isNotEmpty) 'moderators': moderators,
+    if (applied.isNotEmpty) 'applied': applied,
     'files': [for (final f in files) f.toJson()],
   };
 
@@ -144,6 +161,10 @@ class Collection {
     folder: m['folder'] as String,
     createdAt: m['createdAt'] as int,
     cover: m['cover'] as String?,
+    moderators: [
+      for (final x in m['moderators'] as List? ?? const []) (x as Map).cast<String, String>(),
+    ],
+    applied: (m['applied'] as List?)?.cast<String>().toList(),
     files: [for (final f in m['files'] as List) LibraryFile.fromJson(f as Map<String, dynamic>)],
   );
 }
@@ -445,6 +466,42 @@ class Library {
     await _save();
   }
 
+  /// Sets who moderates the collection.
+  Future<void> setModerators(String collectionId, List<Map<String, String>> moderators) async {
+    final col = byId(collectionId);
+    col.moderators
+      ..clear()
+      ..addAll(moderators);
+    await _save();
+  }
+
+  /// Records that a moderator's change is part of the collection now.
+  Future<void> markApplied(String collectionId, String changeId) async {
+    final col = byId(collectionId);
+    col.applied.add(changeId);
+    if (col.applied.length > Collection.maxApplied) col.applied.removeAt(0);
+    await _save();
+  }
+
+  /// Adds a file that is already inside the collection's folder (downloaded
+  /// there), with the given description.
+  Future<LibraryFile> adopt(
+    String collectionId,
+    String absolutePath, {
+    String title = '',
+    String description = '',
+    List<String> tags = const [],
+  }) async {
+    final col = byId(collectionId);
+    final f = await _describe(col, File(absolutePath));
+    if (title.isNotEmpty) f.title = title;
+    f.description = description;
+    f.tags = tags;
+    col.files.add(f);
+    await saveFile(col, f);
+    return f;
+  }
+
   /// Chooses the file shown for the collection, or none with null.
   Future<void> setCover(String collectionId, String? path) async {
     final col = byId(collectionId);
@@ -459,7 +516,13 @@ class Library {
     await _save();
   }
 
-  Future<void> _save() async {
+  // Saves one at a time: two writers sharing the temporary file would
+  // make the second rename fail.
+  Future<void> _saving = Future.value();
+
+  Future<void> _save() => _saving = _saving.then((_) => _write(), onError: (_) => _write());
+
+  Future<void> _write() async {
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(
       const JsonEncoder.withIndent(' ').convert({

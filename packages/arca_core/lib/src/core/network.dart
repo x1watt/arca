@@ -11,6 +11,7 @@ import 'package:i2p/i2p.dart';
 import '../nostr/event.dart';
 import '../relay/event_store.dart';
 import '../relay/nostr_node.dart';
+import '../transport/blobs.dart';
 import '../transport/i2p_link.dart';
 import '../transport/link.dart';
 
@@ -22,12 +23,21 @@ class OnlineProfile {
     required this.i2pEncSeed,
     required this.i2pSignSeed,
     required this.store,
+    this.policy,
+    this.resolve,
   });
   final String id;
   final String pubkey;
   final Uint8List i2pEncSeed;
   final Uint8List i2pSignSeed;
   final EventStore store;
+
+  /// Extra rules for events from others, on top of "own events and events
+  /// that tag the owner" (roles on collections).
+  final Future<String?> Function(NostrEvent event)? policy;
+
+  /// Files this profile shares, by SHA-256, for [BlobService].
+  final Future<String?> Function(String sha256)? resolve;
 }
 
 enum NetState { off, starting, up, failed }
@@ -140,16 +150,20 @@ class _Multi implements MessageLink {
 }
 
 class NetworkManager {
-  NetworkManager(this.backend, {this.onChange});
+  NetworkManager(this.backend, {this.onChange, this.onEvent});
 
   final NetworkBackend backend;
 
   /// Called whenever the state or the set of online profiles changes.
   final void Function()? onChange;
 
+  /// Called with each event another client stored in a profile's relay.
+  final void Function(String profileId, NostrEvent event)? onEvent;
+
   NetState state = NetState.off;
   String? error;
   final _nodes = <String, NostrNode>{};
+  final _blobs = <String, BlobService>{};
   final _addresses = <String, String>{};
   final _wanted = <String, OnlineProfile>{};
 
@@ -159,6 +173,8 @@ class NetworkManager {
   String? addressOf(String profileId) => _addresses[profileId];
 
   NostrNode? nodeOf(String profileId) => _nodes[profileId];
+
+  BlobService? blobsOf(String profileId) => _blobs[profileId];
 
   /// Starts the transport, then puts every wanted profile online. Safe to
   /// call once; later changes go through [setOnline].
@@ -202,6 +218,7 @@ class NetworkManager {
     final node = _nodes.remove(profileId);
     final address = _addresses.remove(profileId);
     await node?.close();
+    await _blobs.remove(profileId)?.close();
     if (address != null) await backend.removeDestination(address);
     onChange?.call();
   }
@@ -216,8 +233,16 @@ class NetworkManager {
       address: address,
       link: backend.link,
       store: p.store,
-      policy: (e, from) => _accepts(p.pubkey, e),
-      onStored: (_) => onChange?.call(),
+      policy: (e, from) async => _accepts(p.pubkey, e) ?? await p.policy?.call(e),
+      onStored: (e) {
+        onEvent?.call(p.id, e);
+        onChange?.call();
+      },
+    );
+    _blobs[p.id] = BlobService(
+      address: address,
+      link: backend.link,
+      resolve: p.resolve ?? (_) async => null,
     );
   }
 
@@ -233,7 +258,11 @@ class NetworkManager {
     for (final n in _nodes.values) {
       await n.close();
     }
+    for (final b in _blobs.values) {
+      await b.close();
+    }
     _nodes.clear();
+    _blobs.clear();
     _addresses.clear();
     await backend.stop();
     state = NetState.off;

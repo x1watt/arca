@@ -11,10 +11,12 @@ import 'dart:typed_data';
 import 'package:i2p/i2p.dart' show sharedDestinationAddress;
 
 import '../crypto/hex.dart';
+import '../library/collection_index.dart';
 import '../library/library.dart';
 import '../library/previews.dart';
 import '../library/sidecars.dart';
 import '../library/subtitles.dart';
+import '../library/sync.dart';
 import '../nostr/event.dart';
 import '../nostr/filter.dart';
 import '../nostr/nip19.dart';
@@ -23,6 +25,8 @@ import '../profiles/vault.dart';
 import '../relay/event_store.dart';
 import 'network.dart';
 import 'social.dart';
+
+part 'collaboration.dart';
 
 class CoreService {
   CoreService._(this._store, this.net, this._dataDir, this._defaultBase);
@@ -60,6 +64,12 @@ class CoreService {
 
   /// Manifests and subtitles beside the files, one cache for all profiles.
   final _sidecars = Sidecars();
+
+  // Working together on collections (collaboration.dart).
+  final _syncStores = <String, Future<SyncStore>>{};
+  final _shaPaths = <String, Map<String, String>>{};
+  final _folding = <String>{};
+  final _foldAgain = <String>{};
   String? _subtitleSha;
   String _subtitleName = '';
   bool _subtitlesRunning = false;
@@ -109,6 +119,10 @@ class CoreService {
     final manager = NetworkManager(
       backend ?? I2pBackend('$dataDir/i2p'),
       onChange: () async => s.onPush?.call(await s._state()),
+      onEvent: (profileId, e) {
+        // A moderator's change reached this admin's relay.
+        if (e.kind == kindCollectionChange) unawaited(s._foldIncoming(profileId));
+      },
     );
     s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? dataDir}/Arca');
     await s._loadSettings();
@@ -156,21 +170,33 @@ class CoreService {
   String get _activeId => _store.active!.id;
 
   /// Publishes the collection's head as an addressable event in the owner's
-  /// relay, so others can see what it holds once they can reach it.
-  Future<void> _publishCollection(Collection col) async {
+  /// relay: its files with their descriptions, its moderators, and the
+  /// moderators' changes already folded in (docs/architecture.md, 4.7).
+  Future<void> _publishCollection(Collection col, [String? profileId]) async {
     final files = [
-      for (final f in col.files) {'path': f.path, 'size': f.size, 'sha256': f.sha256, 'mime': f.mime, 'title': f.title},
+      for (final f in col.files)
+        {
+          'path': f.path,
+          'size': f.size,
+          'sha256': f.sha256,
+          'mime': f.mime,
+          'title': f.title,
+          if (f.description.isNotEmpty) 'description': f.description,
+          if (f.tags.isNotEmpty) 'tags': f.tags,
+        },
     ];
     var content = jsonEncode({'name': col.name, 'description': col.description, 'files': files});
-    if (utf8.encode(content).length > 28000) {
-      // Too big for one event: publish the head and a count; the file list
-      // travels with the collection itself once sharing over I2P lands.
+    if (utf8.encode(content).length > 26000) {
+      // Too big for one message (32 KiB with tags and signature): publish
+      // the head and a count. Collections this large need a paged index.
       content = jsonEncode({'name': col.name, 'description': col.description, 'fileCount': files.length});
     }
-    await _publishLocal(_activeId, Kind.arcaCollection, content, [
+    await _publishLocal(profileId ?? _activeId, Kind.arcaCollection, content, [
       ['d', col.id],
       ['title', col.name],
       ['circle', 'arca:circle:${col.circle}'],
+      for (final m in col.moderators) ['role', m['pubkey']!, 'moderator', m['address'] ?? ''],
+      for (final id in col.applied.reversed.take(maxAppliedIds)) ['applied', id],
     ]);
   }
 
@@ -451,86 +477,43 @@ class CoreService {
 
   /// Fetches what a followed profile publishes: its name, its collections,
   /// and the decisions on suggestions we sent it. Runs in the background.
-  Future<void> _refreshFollow(String profileId, Follow f) async {
-    final node = net.nodeOf(profileId);
-    if (node == null) {
-      f.error = net.state == NetState.up ? 'Your profile is not online.' : 'Not connected to I2P yet.';
-      _push();
-      return;
-    }
-    f.refreshing = true;
-    f.error = null;
-    _push();
-    try {
-      final events = await node.query(f.address, [
-        NostrFilter(authors: [f.pubkey], kinds: const [Kind.profile, Kind.arcaCollection]),
-      ], timeout: const Duration(seconds: 60));
-      final mine = await (await _eventStore(profileId)).query([
-        NostrFilter(
-          authors: [_store.profiles.firstWhere((p) => p.id == profileId).pubkey],
-          kinds: const [kindProposal],
-        ),
-      ]);
-      final decisions = mine.isEmpty
-          ? const <NostrEvent>[]
-          : await node.query(f.address, [
-              NostrFilter(
-                authors: [f.pubkey],
-                kinds: const [Kind.reaction],
-                tags: {
-                  'e': [for (final e in mine) e.id],
-                },
-              ),
-            ], timeout: const Duration(seconds: 60));
-      if (events.isEmpty && f.fetchedAt == null) {
-        f.error = 'No answer yet. Their device may be offline, or their address is still spreading on I2P.';
-      } else {
-        for (final e in events) {
-          if (e.kind == Kind.profile) {
-            try {
-              f.name = (jsonDecode(e.content) as Map)['name'] as String? ?? f.name;
-            } catch (_) {}
-          } else {
-            try {
-              final m = (jsonDecode(e.content) as Map).cast<String, Object?>();
-              f.collections[e.dTag] = {...m, 'id': e.dTag, 'updatedAt': e.createdAt};
-            } catch (_) {}
-          }
-        }
-        for (final d in decisions) {
-          final target = d.tagValues('e').firstOrNull;
-          if (target != null) f.decisions[target] = d.content == '-' ? 'rejected' : 'accepted';
-        }
-        f.fetchedAt = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      }
-    } catch (e) {
-      f.error = '$e';
-    } finally {
-      f.refreshing = false;
-      await (await _followStore(profileId)).save();
-      _push();
-    }
-  }
-
-  /// Suggestions others sent for this profile's files, not yet decided.
+  /// Suggestions sent to this profile, as admin or moderator of the
+  /// collection, that nobody with the right to decide has decided yet.
   Future<List<Map<String, Object?>>> _proposals(String profileId) async {
-    final me = _store.profiles.firstWhere((p) => p.id == profileId).pubkey;
+    final me = _pubkeyOf(profileId);
     final store = await _eventStore(profileId);
-    final incoming = await store.query([
-      NostrFilter(
-        kinds: const [kindProposal],
-        tags: {
-          'p': [me],
-        },
-      ),
-    ]);
-    if (incoming.isEmpty) return const [];
-    final decided = {
-      for (final r in await store.query([
-        NostrFilter(authors: [me], kinds: const [Kind.reaction]),
+    final incoming = [
+      for (final e in await store.query([
+        NostrFilter(
+          kinds: const [kindProposal],
+          tags: {
+            'p': [me],
+          },
+        ),
       ]))
-        ...r.tagValues('e'),
+        if (e.pubkey != me) e,
+    ];
+    if (incoming.isEmpty) return const [];
+    final lib = await _library(profileId);
+    final follows = (await _followStore(profileId)).follows;
+    final byId = {for (final e in incoming) e.id: e};
+    final decided = <String>{
+      for (final f in follows) ...f.decisions.keys.where(byId.containsKey),
     };
+    for (final r in await store.query([
+      NostrFilter(
+        kinds: const [Kind.reaction],
+        tags: {'e': byId.keys.toList()},
+      ),
+    ])) {
+      final target = r.tagValues('e').firstWhere(byId.containsKey, orElse: () => '');
+      if (target.isEmpty) continue;
+      final parts = (byId[target]!.tagValues('a').firstOrNull ?? '').split(':');
+      final col = parts.length == 3 && parts[1] == me
+          ? lib.collections.where((c) => c.id == parts[2]).firstOrNull
+          : null;
+      if (r.pubkey == me || (col?.isModerator(r.pubkey) ?? false)) decided.add(target);
+    }
     final names = <String, String>{};
     for (final e in await store.query([
       NostrFilter(kinds: const [Kind.profile], authors: {for (final e in incoming) e.pubkey}.toList()),
@@ -540,13 +523,14 @@ class CoreService {
       } catch (_) {}
     }
     return [
-      for (final e in incoming.where((e) => !decided.contains(e.id) && e.pubkey != me))
+      for (final e in incoming.where((e) => !decided.contains(e.id)))
         {
           'id': e.id,
           'from': e.pubkey,
           'fromName': names[e.pubkey] ?? ((jsonDecode(e.content) as Map)['fromName'] as String? ?? ''),
           'fromNpub': npubEncode(fromHex(e.pubkey)),
           'createdAt': e.createdAt,
+          'owner': (e.tagValues('a').firstOrNull ?? '').split(':').elementAtOrNull(1) ?? me,
           ...(jsonDecode(e.content) as Map).cast<String, Object?>(),
         },
     ];
@@ -596,6 +580,8 @@ class CoreService {
       i2pEncSeed: Uint8List.fromList(secrets.i2pEncSeed),
       i2pSignSeed: Uint8List.fromList(secrets.i2pSignSeed),
       store: await _eventStore(p.id),
+      policy: (e) => _rolePolicy(p.id, e),
+      resolve: (sha) => _resolveSha(p.id, sha),
     );
     secrets.wipe();
     await net.setOnline(online);
@@ -675,7 +661,16 @@ class CoreService {
       'following': [
         if (_store.active != null)
           for (final f in (await _followStore(_activeId)).follows)
-            {...f.toJson(), 'error': f.error, 'refreshing': f.refreshing},
+            {
+              ...f.toJson(),
+              'error': f.error,
+              'refreshing': f.refreshing,
+              'waiting': f.outbox.length,
+              'synced': {
+                for (final x in (await _syncStore(_activeId)).items.where((x) => x.owner == f.pubkey))
+                  x.collection: x.state(),
+              },
+            },
       ],
       'proposals': _store.active == null ? const [] : await _proposals(_activeId),
       'mySuggestions': _store.active == null ? const [] : await _mySuggestions(_activeId),
@@ -829,10 +824,18 @@ class CoreService {
           for (final f in (await _followStore(_activeId)).follows) {
             unawaited(_refreshFollow(_activeId, f));
           }
+          unawaited(_foldIncoming(_activeId));
         case 'propose':
           final owner = args['owner'] as String;
-          final f = (await _followStore(_activeId)).byPubkey(owner);
+          final fs = await _followStore(_activeId);
+          final f = fs.byPubkey(owner);
           if (f == null) return {'error': 'You do not follow the owner of that collection.'};
+          final m = f.collections[args['collection']];
+          // Sent to the admin and every moderator; any of them may decide.
+          final moderators = [
+            for (final x in m?['moderators'] as List? ?? const [])
+              if ((x as Map)['pubkey'] != _store.active!.pubkey) x.cast<String, Object?>(),
+          ];
           final changes = <String, Object?>{
             if (args['title'] != null) 'title': args['title'],
             if (args['description'] != null) 'description': args['description'],
@@ -854,18 +857,36 @@ class CoreService {
             }),
             [
               ['p', owner],
+              for (final x in moderators) ['p', x['pubkey'] as String],
               ['a', '${Kind.arcaCollection}:$owner:${args['collection']}'],
               ['x', args['sha256'] as String],
             ],
           );
           final node = net.nodeOf(_activeId);
           if (node == null) return {'error': 'Your profile is not online on I2P, so the suggestion could not be sent.'};
-          final r = await node.publish(f.address, e, attempts: 2, timeout: const Duration(seconds: 20));
-          if (!r.accepted) {
+          final targets = [f.address, for (final x in moderators) x['address'] as String? ?? ''].where((a) => a.isNotEmpty);
+          var delivered = false;
+          String? refusal;
+          final missed = <String>[];
+          for (final to in targets) {
+            final r = await node.publish(to, e, attempts: 2, timeout: const Duration(seconds: 20));
+            if (r.accepted) {
+              delivered = true;
+            } else if (r.timedOut) {
+              missed.add(to);
+            } else {
+              refusal ??= r.message;
+            }
+          }
+          if (missed.isNotEmpty) {
+            f.outbox.add({'event': e.toJson(), 'to': missed});
+            await fs.save();
+          }
+          if (!delivered) {
             return {
-              'error': r.timedOut
-                  ? 'The owner did not answer. Try again when they are online.'
-                  : 'Refused: ${r.message}',
+              'error': refusal != null
+                  ? 'Refused: $refusal'
+                  : 'The owner did not answer. Try again when they are online.',
             };
           }
           return {...await _state(), 'sent': e.id};
@@ -874,28 +895,96 @@ class CoreService {
           final accept = args['accept'] as bool;
           final proposal = (await _proposals(_activeId)).where((p) => p['id'] == id).firstOrNull;
           if (proposal == null) return {'error': 'That suggestion is no longer pending.'};
-          if (accept) {
-            final lib = await _library(_activeId);
-            final col = lib.byId(proposal['collection'] as String);
-            final file = col.files.where((f) => f.path == proposal['path']).firstOrNull;
-            if (file == null || file.sha256 != proposal['sha256']) {
-              return {'error': 'The file changed or was removed since the suggestion was made.'};
+          final me = _store.active!.pubkey;
+          final owner = proposal['owner'] as String;
+          final collection = proposal['collection'] as String;
+          final address = '${Kind.arcaCollection}:$owner:$collection';
+          final ch = (proposal['changes'] as Map).cast<String, Object?>();
+          if (owner == me) {
+            // The admin decides for its own collection.
+            if (accept) {
+              final lib = await _library(_activeId);
+              final col = lib.byId(collection);
+              final file = col.files.where((f) => f.path == proposal['path']).firstOrNull;
+              if (file == null || file.sha256 != proposal['sha256']) {
+                return {'error': 'The file changed or was removed since the suggestion was made.'};
+              }
+              await lib.updateFile(
+                col.id,
+                file.path,
+                title: ch['title'] as String?,
+                description: ch['description'] as String?,
+                tags: (ch['tags'] as List?)?.cast<String>(),
+              );
+              await _publishCollection(col);
             }
-            final ch = (proposal['changes'] as Map).cast<String, Object?>();
-            await lib.updateFile(
-              col.id,
-              file.path,
-              title: ch['title'] as String?,
-              description: ch['description'] as String?,
-              tags: (ch['tags'] as List?)?.cast<String>(),
-            );
-            await _publishCollection(col);
+            await _publishLocal(_activeId, Kind.reaction, accept ? '+' : '-', [
+              ['e', id],
+              ['p', proposal['from'] as String],
+              ['a', address],
+              ['k', '$kindProposal'],
+            ]);
+          } else {
+            // A moderator decides: the change is signed as a moderator's
+            // change and goes to the admin with the decision.
+            final fs = await _followStore(_activeId);
+            final f = fs.byPubkey(owner);
+            if (f == null) return {'error': 'You do not follow the admin of that collection.'};
+            if (accept) {
+              final error = await _moderate(_activeId, f, collection, [
+                {'op': 'edit', 'path': proposal['path'], 'sha256': proposal['sha256'], ...ch},
+              ], const [], acceptsProposal: id);
+              if (error != null) return {'error': error};
+            }
+            final r = await _publishLocal(_activeId, Kind.reaction, accept ? '+' : '-', [
+              ['e', id],
+              ['p', proposal['from'] as String],
+              ['p', owner],
+              ['a', address],
+              ['k', '$kindProposal'],
+            ]);
+            f.decisions[id] = accept ? 'accepted' : 'rejected';
+            final refused = await _deliver(_activeId, f, r, [f.address]);
+            await fs.save();
+            if (refused != null) return {'error': 'The admin refused the decision: $refused'};
           }
-          await _publishLocal(_activeId, Kind.reaction, accept ? '+' : '-', [
-            ['e', id],
-            ['p', proposal['from'] as String],
-            ['k', '$kindProposal'],
-          ]);
+        case 'setModerators':
+          final lib = await _library(_activeId);
+          final col = lib.byId(args['collection'] as String);
+          final mods = <Map<String, String>>[];
+          for (final a in (args['addresses'] as List).cast<String>()) {
+            final (pubkey, address) = parseArcaAddress(a);
+            if (pubkey == _store.active!.pubkey) return {'error': 'You are the admin already.'};
+            if (mods.every((m) => m['pubkey'] != pubkey)) mods.add({'pubkey': pubkey, 'address': address});
+          }
+          await lib.setModerators(col.id, mods);
+          await _publishCollection(col);
+        case 'sync':
+          final fs = await _followStore(_activeId);
+          final f = fs.byPubkey(args['owner'] as String);
+          if (f == null) return {'error': 'You do not follow the owner of that collection.'};
+          final collection = args['collection'] as String;
+          final store = await _syncStore(_activeId);
+          if (args['on'] == false) {
+            // Stops keeping it in sync; the files already copied stay.
+            store.items.removeWhere((x) => x.owner == f.pubkey && x.collection == collection);
+            await store.save();
+          } else {
+            final s = await _syncEntry(_activeId, f, collection);
+            unawaited(_syncOne(_activeId, f, s));
+          }
+        case 'moderate':
+          final fs = await _followStore(_activeId);
+          final f = fs.byPubkey(args['owner'] as String);
+          if (f == null) return {'error': 'You do not follow the admin of that collection.'};
+          final error = await _moderate(
+            _activeId,
+            f,
+            args['collection'] as String,
+            [for (final o in args['ops'] as List? ?? const []) (o as Map).cast<String, Object?>()],
+            (args['addPaths'] as List?)?.cast<String>() ?? const [],
+          );
+          if (error != null) return {'error': error};
         case 'downloadModel':
           final m = modelById(args['id'] as String?);
           if (m == null) return {'error': 'Unknown model'};
@@ -966,6 +1055,8 @@ class CoreService {
         default:
           return {'error': 'unknown command $command'};
       }
+      // Files may have been added or removed: rebuild what is shared.
+      _shaPaths.clear();
       return await _state();
     } on FormatException catch (e) {
       return {'error': e.message};

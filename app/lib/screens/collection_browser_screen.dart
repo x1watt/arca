@@ -5,6 +5,7 @@ import '../core/pickers.dart';
 import '../models/kinds.dart';
 import '../widgets/cards.dart';
 import '../widgets/comments.dart';
+import '../widgets/collab.dart';
 import '../widgets/common.dart';
 import 'file_detail_screen.dart';
 import 'review_screen.dart';
@@ -362,6 +363,8 @@ class _BrowserState extends State<_Browser> {
               ),
             ),
           if (isRoot) ...[
+            const Divider(height: 32),
+            ModeratorsSection(collection: c),
             const Divider(height: 32),
             CommentsSection(
               target: 'arca:collection:${widget.ownerPubkey}:${c.id}',

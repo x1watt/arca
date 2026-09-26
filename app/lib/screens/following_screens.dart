@@ -6,9 +6,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
+import '../core/pickers.dart';
 import '../models/kinds.dart';
 import '../widgets/cards.dart';
+import '../widgets/collab.dart';
 import '../widgets/common.dart';
+import 'review_screen.dart';
 
 /// The Following tab: people followed and their collections.
 class FollowingTab extends StatelessWidget {
@@ -225,8 +228,37 @@ class RemoteCollectionScreen extends StatelessWidget {
           ...c.files,
         ]..sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
         final theme = Theme.of(context);
+        final me = state!.active?.pubkey ?? '';
+        final moderator = c.isModerator(me);
+        final toReview = moderator ? state.proposalsFor(c.id).length : 0;
+        Future<void> act(Future<String?> action, String done) async {
+          final error = await action;
+          if (context.mounted) showMessage(context, error ?? done);
+        }
+
         return Scaffold(
-          appBar: AppBar(title: Text(c.name)),
+          appBar: AppBar(
+            title: Text(c.name),
+            actions: [
+              if (moderator)
+                TextButton.icon(
+                  onPressed: () async {
+                    final paths = await pickFiles();
+                    if (paths.isEmpty) return;
+                    await act(
+                      Core.instance.moderate(
+                        ownerPubkey,
+                        c.id,
+                        addPaths: paths,
+                      ),
+                      'Added; ${owner.displayName}\'s device copies it from you',
+                    );
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add files'),
+                ),
+            ],
+          ),
           body: ListView(
             padding: const EdgeInsets.only(bottom: 32),
             children: [
@@ -237,14 +269,26 @@ class RemoteCollectionScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          CircleBadge(state!.commons.name),
-                          const SizedBox(width: 8),
+                          CircleBadge(state.commons.name),
                           Text(
-                            'by ${owner.displayName}',
+                            'Admin: ${owner.displayName}'
+                            '${c.moderators.isEmpty ? '' : ', ${plural(c.moderators.length, 'moderator')}'}',
                             style: theme.textTheme.bodySmall,
                           ),
+                          if (moderator)
+                            Chip(
+                              avatar: const Icon(
+                                Icons.shield_outlined,
+                                size: 16,
+                              ),
+                              label: const Text('You moderate this collection'),
+                              visualDensity: VisualDensity.compact,
+                            ),
                         ],
                       ),
                       if (c.description.isNotEmpty) ...[
@@ -253,20 +297,87 @@ class RemoteCollectionScreen extends StatelessWidget {
                       ],
                       const SizedBox(height: 8),
                       Text(
-                        '${plural(c.files.length, 'file')}  -  ${formatBytes(c.size)}. Downloading arrives with the next version; '
-                        'you can already suggest better titles, descriptions and tags.',
+                        '${plural(c.files.length, 'file')}  -  ${formatBytes(c.size)}. '
+                        '${moderator ? 'You can add, remove and edit files, and review suggestions.' : 'Only its admin and moderators change it; you can suggest better titles, descriptions and tags.'}',
                         style: theme.textTheme.bodySmall,
                       ),
                     ],
                   ),
                 ),
               ),
+              SyncCard(owner: owner, collection: c),
+              if (toReview > 0)
+                Card.outlined(
+                  margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  child: ListTile(
+                    leading: const Icon(Icons.rate_review_outlined),
+                    title: Text('${plural(toReview, 'suggestion')} to review'),
+                    trailing: FilledButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ReviewScreen(collectionId: c.id),
+                        ),
+                      ),
+                      child: const Text('Review'),
+                    ),
+                  ),
+                ),
+              const Divider(),
               for (final f in files)
                 ListTile(
                   leading: KindAvatar(kindForMime(f.mime), size: 40),
                   title: Text(f.displayTitle),
                   subtitle: Text('${f.path}  -  ${formatBytes(f.size)}'),
-                  trailing: const Icon(Icons.chevron_right),
+                  trailing: !moderator
+                      ? const Icon(Icons.chevron_right)
+                      : PopupMenuButton<String>(
+                          onSelected: (v) async {
+                            if (v == 'edit') {
+                              final changes = await editDetails(context, f);
+                              if (changes == null || changes.isEmpty) return;
+                              await act(
+                                Core.instance.moderate(
+                                  ownerPubkey,
+                                  c.id,
+                                  ops: [
+                                    {
+                                      'op': 'edit',
+                                      'path': f.path,
+                                      'sha256': f.sha256,
+                                      ...changes,
+                                    },
+                                  ],
+                                ),
+                                'Changed',
+                              );
+                            } else if (v == 'remove') {
+                              await act(
+                                Core.instance.moderate(
+                                  ownerPubkey,
+                                  c.id,
+                                  ops: [
+                                    {
+                                      'op': 'remove',
+                                      'path': f.path,
+                                      'sha256': f.sha256,
+                                    },
+                                  ],
+                                ),
+                                'Removed from the collection',
+                              );
+                            }
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'edit',
+                              child: Text('Edit details'),
+                            ),
+                            PopupMenuItem(
+                              value: 'remove',
+                              child: Text('Remove from the collection'),
+                            ),
+                          ],
+                        ),
                   onTap: () => Navigator.of(context).push(
                     MaterialPageRoute<void>(
                       builder: (_) => RemoteFileScreen(

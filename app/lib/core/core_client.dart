@@ -274,19 +274,74 @@ class RemoteFile {
   );
 }
 
+/// One of a collection's moderators, as its admin lists them.
+class ModeratorView {
+  const ModeratorView(this.pubkey, this.address);
+  final String pubkey;
+  final String address;
+
+  factory ModeratorView.fromMap(Map m) =>
+      ModeratorView(m['pubkey'] as String, m['address'] as String? ?? '');
+}
+
+/// This profile's copy of someone else's collection, and the running pass.
+class SyncView {
+  const SyncView({
+    required this.folder,
+    required this.running,
+    required this.done,
+    required this.total,
+    required this.bytes,
+    required this.totalBytes,
+    this.error,
+    this.syncedAt,
+  });
+  final String folder;
+  final bool running;
+  final int done;
+  final int total;
+  final int bytes;
+  final int totalBytes;
+  final String? error;
+  final int? syncedAt;
+
+  factory SyncView.fromMap(Map m) => SyncView(
+    folder: m['folder'] as String,
+    running: m['running'] as bool? ?? false,
+    done: m['done'] as int? ?? 0,
+    total: m['total'] as int? ?? 0,
+    bytes: m['bytes'] as int? ?? 0,
+    totalBytes: m['totalBytes'] as int? ?? 0,
+    error: m['error'] as String?,
+    syncedAt: m['syncedAt'] as int?,
+  );
+}
+
 class RemoteCollection {
   const RemoteCollection(
     this.id,
     this.name,
     this.description,
     this.files,
-    this.updatedAt,
-  );
+    this.updatedAt, {
+    this.moderators = const [],
+    this.sync,
+    this.complete = true,
+  });
   final String id;
   final String name;
   final String description;
   final List<RemoteFile> files;
   final int updatedAt;
+  final List<ModeratorView> moderators;
+
+  /// Set when this profile keeps a copy.
+  final SyncView? sync;
+
+  /// False when the collection is too large to list in one event.
+  final bool complete;
+
+  bool isModerator(String pubkey) => moderators.any((m) => m.pubkey == pubkey);
 
   int get size => files.fold(0, (n, f) => n + f.size);
 }
@@ -332,6 +387,15 @@ class FollowView {
               RemoteFile.fromMap(f as Map),
           ],
           c['updatedAt'] as int? ?? 0,
+          moderators: [
+            for (final x in c['moderators'] as List? ?? const [])
+              ModeratorView.fromMap(x as Map),
+          ],
+          sync: switch ((m['synced'] as Map?)?[c['id']]) {
+            final Map x => SyncView.fromMap(x),
+            _ => null,
+          },
+          complete: c['complete'] as bool? ?? true,
         ),
     ],
     decisions: (m['decisions'] as Map? ?? {}).cast<String, String>(),
@@ -353,8 +417,13 @@ class ProposalView {
     required this.sha256,
     required this.changes,
     required this.note,
+    required this.owner,
   });
   final String id;
+
+  /// The collection's admin; not this profile when it reviews as a
+  /// moderator.
+  final String owner;
   final String fromName;
   final String fromNpub;
   final int createdAt;
@@ -378,6 +447,7 @@ class ProposalView {
     sha256: m['sha256'] as String,
     changes: (m['changes'] as Map).cast<String, Object?>(),
     note: m['note'] as String? ?? '',
+    owner: m['owner'] as String? ?? '',
   );
 }
 
@@ -424,12 +494,16 @@ class CollectionView {
     required this.size,
     required this.files,
     this.cover,
+    this.moderators = const [],
   });
 
   final String id;
   final String name;
   final String description;
   final String circle;
+
+  /// People appointed to change this collection besides its admin.
+  final List<ModeratorView> moderators;
   final String folder;
   final int createdAt;
   final int size;
@@ -458,6 +532,10 @@ class CollectionView {
           FileView.fromMap(f as Map, id, name, folder),
       ],
       cover: m['cover'] as String?,
+      moderators: [
+        for (final x in m['moderators'] as List? ?? const [])
+          ModeratorView.fromMap(x as Map),
+      ],
     );
   }
 }
@@ -810,6 +888,31 @@ class Core {
 
   Future<String?> setCover(String collection, String? path) =>
       _change('setCover', {'collection': collection, 'path': path});
+
+  // Working on collections together
+
+  Future<String?> setModerators(String collection, List<String> addresses) =>
+      _change('setModerators', {
+        'collection': collection,
+        'addresses': addresses,
+      });
+
+  /// Starts or stops keeping a copy of someone else's collection.
+  Future<String?> sync(String owner, String collection, {bool on = true}) =>
+      _change('sync', {'owner': owner, 'collection': collection, 'on': on});
+
+  /// As a moderator: sign changes to someone else's collection.
+  Future<String?> moderate(
+    String owner,
+    String collection, {
+    List<Map<String, Object?>> ops = const [],
+    List<String> addPaths = const [],
+  }) => _change('moderate', {
+    'owner': owner,
+    'collection': collection,
+    'ops': ops,
+    'addPaths': addPaths,
+  });
 
   // Following and suggestions
 

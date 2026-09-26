@@ -158,6 +158,9 @@ whisper uses half of the processors on a computer (between 2 and 8) and at most 
 - Model downloads stream to a `.part` file while hashing; an interrupted download continues from where it stopped (HTTP range), rehashing only the bytes already on disk, and is renamed into place only when size and SHA-256 match.
 - Sidecar manifests are written to a temporary file and renamed, so a copy of the folder taken at any moment never holds half of one.
 
+- Files between clients (`transport/blobs.dart`) are served one 24 KiB chunk at a time from the file on disk and written by offset into a `.part` file; eight chunks are in flight, and a `.part.have` bitmap lets a download continue after a break instead of starting over. Over the live I2P network, three instances on this machine copied 115 KB in 1.1 s (about 100 KB/s).
+- Stores written from several places at once (`follows.json`, `synced.json`, `collections.json`) save one at a time: two writers sharing the temporary file made the second rename fail.
+
 The one exception is whisper itself, which needs the whole decoded audio in memory (section 2 and 7).
 
 ---
@@ -234,4 +237,5 @@ XPRS enforces its rules with `tool/arch_guard.dart` on pre-commit. Arca has no g
 - **The GitHub CLI is a snap** and cannot read files under `/tmp`. Stage release assets under the repository's ignored `build/` folder.
 - **`adb shell run-as <pkg> sh -c 'rm dir/*'`** does not expand the glob the way it looks; list the names first and remove them one by one.
 - **The Android file picker only shows media the scanner knows.** After `adb push`, send `MEDIA_SCANNER_SCAN_FILE` for the file, or open it through Downloads.
+- **A stale icon subset.** A release build showed blank icons for icons added since the last build: Flutter reused the trimmed MaterialIcons font from its build cache, without the new glyphs. `rm -rf app/.dart_tool/flutter_build` and building again fixed it. When a new icon shows as nothing in a release build, check the font (`fc-query --format='%{charset}'` on `data/flutter_assets/fonts/MaterialIcons-Regular.otf`) before the code.
 - **`uiautomator dump` sees Flutter's semantics tree**, which is how tests find a button's position on the phone instead of guessing coordinates.

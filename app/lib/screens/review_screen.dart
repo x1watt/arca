@@ -3,7 +3,16 @@ import 'package:flutter/material.dart';
 import '../core/core_client.dart';
 import '../widgets/common.dart';
 
-/// Suggestions others sent for files in one of this profile's collections.
+/// What a suggestion is compared with: the file as the collection lists it.
+typedef CurrentFile = ({
+  String name,
+  String title,
+  String description,
+  List<String> tags,
+});
+
+/// Suggestions others sent for files in a collection this profile
+/// administers or moderates.
 class ReviewScreen extends StatelessWidget {
   const ReviewScreen({super.key, required this.collectionId});
   final String collectionId;
@@ -16,8 +25,39 @@ class ReviewScreen extends StatelessWidget {
         final col = state?.collection(collectionId);
         final pending =
             state?.proposalsFor(collectionId) ?? const <ProposalView>[];
+        // Moderating someone else's collection: its files as followed.
+        final remote = pending.isEmpty || col != null
+            ? null
+            : state
+                  ?.follow(pending.first.owner)
+                  ?.collections
+                  .where((c) => c.id == collectionId)
+                  .firstOrNull;
+        CurrentFile? current(String path) {
+          final own = col?.files.where((f) => f.path == path).firstOrNull;
+          if (own != null) {
+            return (
+              name: own.name,
+              title: own.title,
+              description: own.description,
+              tags: own.tags,
+            );
+          }
+          final r = remote?.files.where((f) => f.path == path).firstOrNull;
+          return r == null
+              ? null
+              : (
+                  name: r.name,
+                  title: r.title,
+                  description: r.description,
+                  tags: r.tags,
+                );
+        }
+
         return Scaffold(
-          appBar: AppBar(title: Text('Suggestions for ${col?.name ?? ''}')),
+          appBar: AppBar(
+            title: Text('Suggestions for ${col?.name ?? remote?.name ?? ''}'),
+          ),
           body: pending.isEmpty
               ? const EmptyState(
                   icon: Icons.task_alt,
@@ -28,12 +68,7 @@ class ReviewScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(12),
                   children: [
                     for (final p in pending)
-                      _ProposalCard(
-                        proposal: p,
-                        current: col?.files
-                            .where((f) => f.path == p.path)
-                            .firstOrNull,
-                      ),
+                      _ProposalCard(proposal: p, current: current(p.path)),
                   ],
                 ),
         );
@@ -45,7 +80,7 @@ class ReviewScreen extends StatelessWidget {
 class _ProposalCard extends StatefulWidget {
   const _ProposalCard({required this.proposal, required this.current});
   final ProposalView proposal;
-  final FileView? current;
+  final CurrentFile? current;
 
   @override
   State<_ProposalCard> createState() => _ProposalCardState();

@@ -45,6 +45,11 @@ class Follow {
 
   /// Proposal id to decision ('accepted' or 'rejected') as published by the owner.
   Map<String, String> decisions = {};
+
+  /// Signed events for this person's collections that did not reach them
+  /// yet (changes and decisions made while they were offline): the event
+  /// and the addresses still to deliver it to.
+  List<Map<String, Object?>> outbox = [];
   int? fetchedAt;
   String? error;
   bool refreshing = false;
@@ -55,6 +60,7 @@ class Follow {
     'name': name,
     'collections': collections,
     'decisions': decisions,
+    'outbox': outbox,
     'fetchedAt': fetchedAt,
   };
 
@@ -68,6 +74,7 @@ class Follow {
         e.key as String: (e.value as Map).cast<String, Object?>(),
     }
     ..decisions = (m['decisions'] as Map? ?? {}).cast<String, String>()
+    ..outbox = [for (final o in m['outbox'] as List? ?? const []) (o as Map).cast<String, Object?>()]
     ..fetchedAt = m['fetchedAt'] as int?;
 }
 
@@ -88,7 +95,13 @@ class FollowStore {
 
   Follow? byPubkey(String pk) => follows.where((f) => f.pubkey == pk).firstOrNull;
 
-  Future<void> save() async {
+  // Saves one at a time: two writers sharing the temporary file would
+  // make the second rename fail.
+  Future<void> _saving = Future.value();
+
+  Future<void> save() => _saving = _saving.then((_) => _write(), onError: (_) => _write());
+
+  Future<void> _write() async {
     final tmp = File('${_file.path}.tmp');
     await tmp.writeAsString(jsonEncode([for (final f in follows) f.toJson()]), flush: true);
     await tmp.rename(_file.path);
