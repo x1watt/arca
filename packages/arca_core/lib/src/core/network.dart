@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:i2p/i2p.dart';
@@ -42,6 +43,9 @@ class OnlineProfile {
 
 enum NetState { off, starting, up, failed }
 
+/// First byte of the probe a profile sends itself (NetworkManager).
+const probeTag = 0xB0;
+
 /// The transport under the network manager: I2P in the app, a loopback
 /// network in tests.
 abstract class NetworkBackend {
@@ -55,6 +59,10 @@ abstract class NetworkBackend {
 
   Future<void> removeDestination(String address);
 
+  /// Starts the transport afresh under the same [link] and addresses, for
+  /// when it stopped carrying messages; true when it is back.
+  Future<bool> restart();
+
   Future<void> stop();
 }
 
@@ -66,6 +74,10 @@ class I2pBackend implements NetworkBackend {
   final void Function(String)? log;
   I2pService? _service;
   I2pLink? _link;
+
+  /// The seeds of the destinations added, by address, to add them again
+  /// after a restart.
+  final _seeds = <String, (Uint8List, Uint8List)>{};
 
   @override
   Future<bool> start() async {
@@ -79,19 +91,39 @@ class I2pBackend implements NetworkBackend {
     }
     final s = I2pService(identity: identity, stateDir: stateDir, log: log);
     _service = s;
-    _link = I2pLink(s);
+    if (_link == null) {
+      _link = I2pLink(s);
+    } else {
+      _link!.use(s);
+    }
     return s.ensureStarted();
+  }
+
+  @override
+  Future<bool> restart() async {
+    _service?.stop();
+    if (!await start()) return false;
+    for (final (enc, sign) in _seeds.values) {
+      await _service!.addSharedDestination(enc, sign);
+    }
+    return true;
   }
 
   @override
   MessageLink get link => _link!;
 
   @override
-  Future<String?> addDestination(Uint8List encSeed, Uint8List signSeed) =>
-      _service!.addSharedDestination(encSeed, signSeed);
+  Future<String?> addDestination(Uint8List encSeed, Uint8List signSeed) async {
+    final a = await _service!.addSharedDestination(encSeed, signSeed);
+    if (a != null) _seeds[a] = (encSeed, signSeed);
+    return a;
+  }
 
   @override
-  Future<void> removeDestination(String address) async => _service?.removeSharedDestination(address);
+  Future<void> removeDestination(String address) async {
+    _seeds.remove(address);
+    await _service?.removeSharedDestination(address);
+  }
 
   @override
   Future<void> stop() async => _service?.stop();
@@ -122,6 +154,15 @@ class LoopbackBackend implements NetworkBackend {
 
   @override
   Future<void> removeDestination(String address) async => _addresses.remove(address);
+
+  /// Counted, so tests can see the manager restart a deaf transport.
+  int restarts = 0;
+
+  @override
+  Future<bool> restart() async {
+    restarts++;
+    return startOk;
+  }
 
   @override
   Future<void> stop() async {}
@@ -162,6 +203,27 @@ class NetworkManager {
 
   NetState state = NetState.off;
   String? error;
+
+  /// How often a profile sends itself a probe over the network, and how
+  /// many probes in a row may go missing before the transport is started
+  /// afresh. A node can stay "up" while it no longer reaches or hears
+  /// anyone (docs/performance.md, 3.17); only a message sent all the way
+  /// round shows it still works.
+  Duration probeEvery = const Duration(minutes: 5);
+  Duration probeWait = const Duration(seconds: 90);
+  int probeMisses = 3;
+
+  /// Times the transport was started afresh because probes went missing.
+  int restarts = 0;
+
+  /// Probes sent and probes that came back, and how long the last one took.
+  int probesSent = 0, probesBack = 0;
+  Duration? lastProbe;
+  Timer? _probeTimer;
+  int _missed = 0;
+  bool _probing = false;
+  final _rng = Random.secure();
+
   final _nodes = <String, NostrNode>{};
   final _blobs = <String, BlobService>{};
   final _addresses = <String, String>{};
@@ -201,7 +263,64 @@ class NetworkManager {
     for (final p in _wanted.values.toList()) {
       await _attach(p);
     }
+    _probeTimer ??= Timer.periodic(probeEvery, (_) => _probe());
     onChange?.call();
+  }
+
+  /// Sends a probe from one of our addresses to itself and waits for it.
+  /// After [probeMisses] misses in a row, restarts the transport.
+  Future<void> _probe() async {
+    if (_probing || _addresses.isEmpty) return;
+    if (state == NetState.failed) return _restart();
+    if (state != NetState.up) return;
+    _probing = true;
+    try {
+      final address = _addresses.values.first;
+      final nonce = Uint8List.fromList([probeTag, for (var i = 0; i < 16; i++) _rng.nextInt(256)]);
+      final back = backend.link.incoming
+          .where((m) => m.to == address && m.bytes.length == nonce.length && _same(m.bytes, nonce))
+          .first
+          .then((_) => true)
+          .timeout(probeWait, onTimeout: () => false);
+      final sw = Stopwatch()..start();
+      probesSent++;
+      final sent = await backend.link.send(address, nonce, from: address);
+      final ok = sent && await back;
+      if (ok) {
+        probesBack++;
+        lastProbe = sw.elapsed;
+        _missed = 0;
+        return;
+      }
+      _missed++;
+      stderr.writeln('network: probe $_missed of $probeMisses went missing');
+      if (_missed < probeMisses) return;
+      _missed = 0;
+      stderr.writeln('network: nothing gets through; starting the transport afresh');
+      await _restart();
+    } finally {
+      _probing = false;
+    }
+  }
+
+  /// Starts the transport afresh under the same link and addresses; tried
+  /// again at the next probe if it fails.
+  Future<void> _restart() async {
+    restarts++;
+    state = NetState.starting;
+    error = null;
+    onChange?.call();
+    final up = await backend.restart();
+    state = up ? NetState.up : NetState.failed;
+    if (!up) error = 'The I2P node stopped answering and could not start again yet; Arca keeps trying.';
+    onChange?.call();
+  }
+
+  static bool _same(Uint8List a, Uint8List b) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   /// Puts a profile online (or keeps it online). Takes effect at once when
@@ -252,6 +371,8 @@ class NetworkManager {
   }
 
   Future<void> stop() async {
+    _probeTimer?.cancel();
+    _probeTimer = null;
     for (final n in _nodes.values) {
       await n.close();
     }

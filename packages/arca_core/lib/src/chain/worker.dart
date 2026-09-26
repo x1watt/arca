@@ -114,6 +114,7 @@ class _LightMember {
   CircleState? circle;
   final pending = <Tx>[];
   String readAt = '';
+  int readTick = 0;
   bool reading = false;
   String lastState = '';
   Timer? timer;
@@ -541,12 +542,20 @@ class ChainWorker {
         m.light.broadcast({'t': 'tx', 'tx': t.toJson()});
       }
     }
+    // A light device reads its balance and standing with proofs, five
+    // requests over I2P: at each new block while a transaction of its own
+    // waits, otherwise every six blocks (a minute on the test network),
+    // which is what the wallet shows (docs/performance.md, 3.18).
     final head = m.light.headHash;
-    if (!m.reading && head.isNotEmpty && (head != m.readAt || m.ticks % 15 == 0)) {
+    final p = m.spec.params;
+    final every = (p.blockTicks * p.tickMillis * _lightReadBlocks / 1000).ceil();
+    final due = m.readAt.isEmpty || m.pending.isNotEmpty || m.ticks - m.readTick >= every;
+    if (!m.reading && head.isNotEmpty && head != m.readAt && due) {
       m.reading = true;
       try {
         await _lightRead(m, head);
         m.readAt = head;
+        m.readTick = m.ticks;
       } catch (_) {
         // A full node that did not answer: next time.
       } finally {
@@ -560,6 +569,9 @@ class ChainWorker {
       _out(['state', m.profileId, s]);
     }
   }
+
+  /// Blocks between a light device's reads when nothing of its own waits.
+  static const _lightReadBlocks = 6;
 
   Future<void> _lightRead(_LightMember m, String at) async {
     final me = m.pubkey;

@@ -183,6 +183,20 @@ The same cache bites after a restart. A seed node (the founder) that restarted c
 
 > **Rule: a network test must outlast every lifetime in the protocol.** I2P tunnels and leases last ten minutes; every live check so far ran for less, so all of them passed.
 
+### 3.17 Up, but deaf
+
+After about two hours on the C61, the app still showed its network as up and one chain peer, but its chain had stopped at one block and joining another network failed with "No answer over I2P" twice, against a seed that a desktop reached at the same time. The process used five seconds of processor time in six minutes and sent a few kilobytes: it was trying, and nothing came back. Closing and opening the app fixed it at once. What breaks inside the I2P node is not known yet (a release build keeps no log on the phone).
+
+Fix (`core/network.dart`): the network manager checks the whole path instead of trusting "up". Every five minutes a profile sends itself a probe (tag `0xB0`, a random nonce) over I2P, which goes out through a gateway, looks up the profile's own leases and comes back through its inbound tunnels. When three probes in a row go missing (fifteen minutes deaf), the manager starts the I2P node afresh under the same link and addresses (`NetworkBackend.restart`), so relays, file serving and the chain carry on without noticing. A probe costs one small message and a lease lookup. Tested with a loopback network that takes messages and delivers none (`test/network_probe_test.dart`).
+
+Measured on the live network (`tool/probe_check.dart`, a probe every 30 s): a probe comes back in 300 to 370 ms.
+
+### 3.18 A light phone that was not light
+
+The C61 following the test network lightly (no files kept), in its steady state, used 28 s of processor time every five minutes (about 9% of one core) and moved 3.1 MB in and 2.2 MB out: about 37 MB an hour received. The chain gives it little to carry: a header every ten seconds. What cost was the wallet: at every new block, five proven reads (balance, nonce, circle, standing, sync score), each a request and an answer with Merkle proofs, and I2P sends every message to each of the destination's gateways over two paths, so each read crosses the network up to eight times.
+
+Fix (`chain/worker.dart`): a light device reads at each new block only while a transaction of its own waits; otherwise every six blocks (a minute on the test network), which is as fresh as a wallet needs to be.
+
 ---
 
 ## 4. The heavy jobs and how they are run
