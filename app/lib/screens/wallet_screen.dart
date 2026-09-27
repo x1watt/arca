@@ -177,6 +177,41 @@ class _OnChain extends StatelessWidget {
     }
   }
 
+  /// The wallet address, readable and copyable: what others pay to.
+  Future<void> _receive(BuildContext context, String address) async {
+    final groups = [
+      for (var i = 0; i < address.length; i += 6)
+        address.substring(i, (i + 6).clamp(0, address.length)),
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Your wallet address'),
+        content: SelectableText(
+          groups.join(' '),
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 18,
+            height: 1.5,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              await _copy(context, address, 'Your wallet address');
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('Copy'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _copy(BuildContext context, String text, String what) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (context.mounted) showMessage(context, '$what copied');
@@ -229,7 +264,9 @@ class _OnChain extends StatelessWidget {
                     style: theme.textTheme.headlineMedium,
                   ),
                   Text(
-                    'Private: nobody else sees it, or whom you pay.',
+                    chain.returning > 0
+                        ? 'Private, and ${formatMarcas(chain.returning)} coming back as change with the next block.'
+                        : 'Private: nobody else sees it, or whom you pay.',
                     style: muted,
                   ),
                   const SizedBox(height: 8),
@@ -279,11 +316,7 @@ class _OnChain extends StatelessWidget {
                       OutlinedButton.icon(
                         onPressed: chain.address.isEmpty
                             ? null
-                            : () => _copy(
-                                context,
-                                chain.address,
-                                'Your wallet address',
-                              ),
+                            : () => _receive(context, chain.address),
                         icon: const Icon(Icons.qr_code_2_outlined),
                         label: const Text('Receive'),
                       ),

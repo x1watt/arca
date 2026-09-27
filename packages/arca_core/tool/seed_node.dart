@@ -105,8 +105,33 @@ Future<void> main(List<String> args) async {
   say('network ${chain!['spec']}, spec in $dir/spec.json');
 
   // A line a minute, for the service's log, and the head as a checkpoint
-  // a release can build in (TestnetSpec._builtInCheckpoint).
+  // a release can build in (TestnetSpec._builtInCheckpoint). Lines added to
+  // <data dir>/faucet ("<wallet address> <marcas>") are paid privately from
+  // the founder's allocation: test marcas for whoever asks.
+  final faucet = File('$dir/faucet');
   while (!stopping) {
+    if (faucet.existsSync()) {
+      final lines = faucet.readAsLinesSync().where((l) => l.trim().isNotEmpty).toList();
+      faucet.deleteSync();
+      for (final line in lines) {
+        final parts = line.trim().split(RegExp(r'\s+'));
+        if (parts.length != 2) continue;
+        final moved = await core.handle('chainMove', {'amount': parts[1]});
+        if (moved['error'] != null) {
+          say('faucet: ${moved['error']}');
+          continue;
+        }
+        // Wait for the marcas to be on the private side, then pay.
+        for (var i = 0; i < 60; i++) {
+          final r = await core.handle('chainSend', {'to': parts[0], 'amount': parts[1]});
+          if (r['error'] == null) {
+            say('faucet: paid ${parts[1]} marcas to ${parts[0].substring(0, 14)}...');
+            break;
+          }
+          await Future<void>.delayed(const Duration(seconds: 5));
+        }
+      }
+    }
     final cp = await core.handle('chainCheckpoint', {});
     if (cp['anchor'] != null) File('$dir/checkpoint.json').writeAsStringSync(jsonEncode(cp['anchor']));
     s = await core.handle('state', {});

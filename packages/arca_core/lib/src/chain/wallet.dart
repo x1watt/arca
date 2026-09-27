@@ -36,6 +36,16 @@ class Wallet {
     }
   }
 
+  /// Change on its way back from this wallet's own transactions, until
+  /// the block that holds it is scanned (or [spendingFor] passes).
+  final _returning = <BigInt, DateTime>{};
+
+  BigInt get returning => _returning.keys.fold(BigInt.zero, (a, v) => a + v);
+
+  void expectChange(BigInt value) {
+    if (value > BigInt.zero) _returning[value] = DateTime.now();
+  }
+
   /// Outputs looked at already, so each is scanned once.
   final _seen = <String>{};
 
@@ -56,12 +66,14 @@ class Wallet {
     }
     final stale = DateTime.now().subtract(spendingFor);
     _spending.removeWhere((_, since) => since.isBefore(stale));
+    _returning.removeWhere((_, since) => since.isBefore(stale));
     _seen.removeWhere((k) => !outputs.containsKey(k));
     for (final e in outputs.entries) {
       if (!_seen.add(e.key)) continue;
       final o = find(e.key, e.value);
       if (o != null) {
         owned[e.key] = o;
+        _returning.remove(o.value);
         changed = true;
       }
     }

@@ -416,6 +416,7 @@ class ChainWorker {
       payments: [(address, BigInt.from(amount)), if (change > BigInt.zero) (w.address, change)],
     );
     w.markSpending(coins.map((c) => c.commitment));
+    w.expectChange(change);
     return (tx: Tx(type: TxType.private, from: '', nonce: 0, body: built.body, sig: ''), error: null);
   }
 
@@ -943,6 +944,7 @@ class ChainWorker {
       'peers': m.light.peers.length,
       'balance': m.balance,
       'private': m.wallet.balance.toInt(),
+      'returning': m.wallet.returning.toInt(),
       'address': m.wallet.address.encoded,
       'pending': m.pending.length,
       'mining': false,
@@ -1230,6 +1232,7 @@ class ChainWorker {
       'balance': s.balanceOf(m.pubkey),
       'audited': m.audited,
       'private': m.wallet.balance.toInt(),
+      'returning': m.wallet.returning.toInt(),
       'address': m.wallet.address.encoded,
       'pending': m.node.waiting.where((t) => t.from == m.pubkey).length,
       'mining': m.miningWanted,

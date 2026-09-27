@@ -112,12 +112,18 @@ class TestnetSpec {
   );
 
   /// The test network built into this version of Arca, made by its seed
-  /// node (docs/seed-node.md); null when there is none. ARCA_TESTNET_SPEC,
-  /// the path of a spec file, replaces it (to try another network).
+  /// node (docs/seed-node.md); null when there is none. To try another
+  /// network: ARCA_TESTNET_SPEC, the path of a spec file, on a desktop, or
+  /// a build with --dart-define=ARCA_TESTNET_SPEC_JSON=<the spec> (phones).
   static final TestnetSpec? builtIn = () {
     try {
       final path = Platform.environment['ARCA_TESTNET_SPEC'];
-      final text = path != null ? File(path).readAsStringSync() : _builtInSpec;
+      const defined = String.fromEnvironment('ARCA_TESTNET_SPEC_JSON');
+      final text = path != null
+          ? File(path).readAsStringSync()
+          : defined.isNotEmpty
+          ? defined
+          : _builtInSpec;
       if (text.trim().isEmpty) return null;
       return TestnetSpec((jsonDecode(text) as Map).cast<String, Object?>());
     } on Object {

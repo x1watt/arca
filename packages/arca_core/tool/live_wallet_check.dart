@@ -82,7 +82,7 @@ Future<void> main(List<String> args) async {
     say('FAIL start: ${r['error']}');
     exit(2);
   }
-  final sa = await waitFor(a, ready, 'A packed and declared');
+  await waitFor(a, ready, 'A packed and declared');
   say('A was ready ${sw.elapsed.inSeconds} s after starting');
   final spec = (await a.handle('chainSpec', {}))['spec'] as Map;
 

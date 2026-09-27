@@ -73,7 +73,6 @@ void main() {
     }
 
     var a = await open('founder'), b = await open('joiner');
-    Future<Map> me(CoreService c) async => ((await c.handle('state', {}))['profiles'] as List).single as Map;
 
     // The founder's collection: five chunks, so two partitions.
     final rng = Random(3);

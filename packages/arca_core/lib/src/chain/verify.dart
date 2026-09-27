@@ -85,7 +85,7 @@ class ChainChecker {
     final cumulative = <BigInt>[];
     final now = _currentTick();
     for (final h in chain) {
-      if (h.height != prevHeight + 1) return Checked.fail('block ${h.height} does not follow ${prevHeight}');
+      if (h.height != prevHeight + 1) return Checked.fail('block ${h.height} does not follow $prevHeight');
       if (h.prev != prevHash) return Checked.fail('block ${h.height} names another parent');
       if (h.tick <= prevTick) return Checked.fail('block ${h.height} is not later than its parent');
       if (h.tick > now + 2) return Checked.fail('block ${h.height} is from the future');

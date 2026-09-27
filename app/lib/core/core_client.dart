@@ -668,6 +668,7 @@ class ChainView {
     required this.peers,
     required this.balance,
     required this.privateBalance,
+    required this.returning,
     required this.address,
     required this.audited,
     required this.pending,
@@ -718,6 +719,9 @@ class ChainView {
 
   /// The private balance, in grains: what the wallet found it owns.
   final int privateBalance;
+
+  /// Change on its way back from a payment just sent, in grains.
+  final int returning;
 
   /// The wallet address others pay privately (marca1...).
   final String address;
@@ -772,6 +776,7 @@ class ChainView {
       peers: m['peers'] as int,
       balance: m['balance'] as int,
       privateBalance: m['private'] as int? ?? 0,
+      returning: m['returning'] as int? ?? 0,
       address: m['address'] as String? ?? '',
       audited: m['audited'] as bool?,
       pending: m['pending'] as int,
