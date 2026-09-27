@@ -823,7 +823,8 @@ class CoreService {
       // A testnet chosen but not running yet (the network is still coming up).
       'chainPending': _store.active != null && _chainHas.contains(_activeId) && !_chainStates.containsKey(_activeId),
       'chainError': _store.active == null ? null : _chainErrors[_activeId],
-      'publicInvite': TestnetSpec.publicInvite,
+      // The test network built into this version, joined with one button.
+      'testnet': TestnetSpec.builtIn == null ? null : {'name': TestnetSpec.builtIn!.corpusName},
       'proposals': _store.active == null ? const [] : await _proposals(_activeId),
       'mySuggestions': _store.active == null ? const [] : await _mySuggestions(_activeId),
     };

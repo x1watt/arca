@@ -38,13 +38,15 @@ class LoopbackNetwork {
   /// can overtake each other as they do over I2P tunnels.
   Duration latency;
   final Random _rng;
-  final _owners = <String, _LoopbackLink>{};
+  /// Links answering for each address. Several can answer for one, as
+  /// nodes do for a shared I2P destination: each gets its own copy.
+  final _owners = <String, List<_LoopbackLink>>{};
   final _offline = <String>{};
 
   MessageLink link(List<String> addresses) {
     final l = _LoopbackLink(this, addresses.toSet());
     for (final a in addresses) {
-      _owners[a] = l;
+      (_owners[a] ??= []).add(l);
     }
     return l;
   }
@@ -53,14 +55,16 @@ class LoopbackNetwork {
   void setOnline(String address, bool online) => online ? _offline.remove(address) : _offline.add(address);
 
   Future<bool> _deliver(String from, String to, Uint8List bytes) async {
-    final target = _owners[to];
-    if (target == null || _offline.contains(to) || _offline.contains(from)) return false;
+    final targets = _owners[to];
+    if (targets == null || targets.isEmpty || _offline.contains(to) || _offline.contains(from)) return false;
     if (dropRate > 0 && _rng.nextDouble() < dropRate) return true;
-    void arrive() => target._controller.add(Inbound(from, to, bytes));
-    if (latency == Duration.zero) {
-      scheduleMicrotask(arrive);
-    } else {
-      Timer(latency * _rng.nextDouble(), arrive);
+    for (final target in targets) {
+      void arrive() => target._controller.add(Inbound(from, to, bytes));
+      if (latency == Duration.zero) {
+        scheduleMicrotask(arrive);
+      } else {
+        Timer(latency * _rng.nextDouble(), arrive);
+      }
     }
     return true;
   }

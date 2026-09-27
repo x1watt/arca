@@ -1,7 +1,8 @@
 // The wallet flow over the live I2P network, as two devices run it: A
-// starts a test network from a collection, B joins with A's invite (the
-// spec, the founder's collection and every chain message over I2P), both
-// keep and prove the corpus, and A pays B.
+// starts a test network from a collection, B joins knowing only its spec
+// (as if built into the app): it meets A at the network's meeting point and
+// fetches the corpus by hash, all over I2P; both keep and prove the
+// corpus, and A pays B.
 //
 //   dart run tool/live_wallet_check.dart <data dir> <file>...
 import 'dart:io';
@@ -83,17 +84,16 @@ Future<void> main(List<String> args) async {
   }
   final sa = await waitFor(a, ready, 'A packed and declared');
   say('A was ready ${sw.elapsed.inSeconds} s after starting');
-  final invite = chainOf(sa)['invite'] as String;
-  say('invite ${invite.substring(0, 30)}...');
+  final spec = (await a.handle('chainSpec', {}))['spec'] as Map;
 
   sw = Stopwatch()..start();
-  r = await b.handle('chainJoin', {'invite': invite});
-  if (r['error'] != null) {
-    say('FAIL join: ${r['error']}');
-    exit(2);
-  }
-  say('B fetched the spec and the collection index in ${sw.elapsed.inSeconds} s');
-  await waitFor(b, ready, 'B copied, rebuilt the corpus, packed and declared');
+  r = await b.handle('chainJoin', {'spec': spec});
+  // A first try can miss: the meeting point's lease set takes a while to
+  // spread. The core tries again every minute.
+  say('B joins: ${r['error'] ?? 'met the network'} (${sw.elapsed.inSeconds} s)');
+  await waitFor(b, (s) => chainOf(s)['height'] != null, 'B met the network and follows it');
+  say('B met the network after ${sw.elapsed.inSeconds} s');
+  await waitFor(b, ready, 'B fetched the corpus by hash, rebuilt it, packed and declared');
   say('B joined in ${sw.elapsed.inSeconds} s');
 
   final bNpub = (((await b.handle('state', {}))['profiles'] as List).single as Map)['npub'];

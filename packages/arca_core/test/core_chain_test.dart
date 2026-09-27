@@ -1,5 +1,7 @@
 // The chain inside the core, as the app uses it: a founder starts a
-// testnet from a collection, a second device joins with the invite, both
+// testnet from a collection, a second device joins with nothing but the
+// network's spec (built into the app; here passed in): it finds the founder
+// at the network's meeting point and fetches the corpus by hash. Both
 // keep and prove the corpus, pay each other, and the founder pays out the
 // circle's pool, which the other claims. Then both restart from their
 // snapshots.
@@ -56,7 +58,7 @@ void main() {
   setUp(() async => tmp = await Directory.systemTemp.createTemp('arca_core_chain'));
   tearDown(() async => tmp.delete(recursive: true));
 
-  test('start a testnet, join by invite, keep the corpus, pay, pay out and claim, restart', () async {
+  test('start a testnet, join by meeting, keep the corpus, pay, pay out and claim, restart', () async {
     final net = LoopbackNetwork();
     Future<CoreService> open(String name) async {
       final c = await CoreService.open(
@@ -89,11 +91,11 @@ void main() {
     var sa = await waitFor(a, ready, what: 'the founder packs and declares');
     expect((chainOf(sa)['partitions'] as List), hasLength(2));
     expect(chainOf(sa)['balance'], 10000 * m, reason: 'the founder\'s test allocation');
-    final invite = chainOf(sa)['invite'] as String;
+    final spec = (await a.handle('chainSpec', {}))['spec'] as Map;
 
-    // The second device joins: it copies the collection, rebuilds the corpus
-    // and checks its root, then packs and declares.
-    r = await b.handle('chainJoin', {'invite': invite});
+    // The second device joins: it meets the founder, fetches the corpus by
+    // hash, rebuilds it and checks its root, then packs and declares.
+    r = await b.handle('chainJoin', {'spec': spec});
     expect(r['error'], isNull, reason: '${r['error']}');
     var sb = await waitFor(b, ready, what: 'the joiner copies, packs and declares', seconds: 90);
     expect(chainOf(sb)['founder'], isFalse);
@@ -186,7 +188,7 @@ void main() {
 
     // A phone follows lightly: headers and proven reads, nothing kept.
     final c = await open('phone');
-    r = await c.handle('chainJoin', {'invite': invite, 'light': true});
+    r = await c.handle('chainJoin', {'spec': spec, 'light': true});
     expect(r['error'], isNull, reason: '${r['error']}');
     var sc = await waitFor(
       c,
@@ -222,9 +224,9 @@ void main() {
     // Newcomers after the founder restarted: its node keeps no blocks older
     // than its snapshot, so they start from its checkpoint.
     final late = await open('late'), lateLight = await open('late-phone');
-    r = await late.handle('chainJoin', {'invite': invite});
+    r = await late.handle('chainJoin', {'spec': spec});
     expect(r['error'], isNull, reason: '${r['error']}');
-    r = await lateLight.handle('chainJoin', {'invite': invite, 'light': true});
+    r = await lateLight.handle('chainJoin', {'spec': spec, 'light': true});
     expect(r['error'], isNull, reason: '${r['error']}');
     await waitFor(late, ready, what: 'a late full node joins from the checkpoint', seconds: 90);
     final heightNow = chainOf(await a.handle('state', {}))['height'] as int;

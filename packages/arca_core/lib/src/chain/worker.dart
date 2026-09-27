@@ -97,15 +97,16 @@ class _RemoteSigner implements Signer {
 /// A profile that follows the chain lightly (phones): headers and proven
 /// reads, no blocks to check, nothing kept.
 class _LightMember {
-  _LightMember(this.profileId, this.signer, this.address, this.invite, this.spec, this.light, this.founderAddress);
+  _LightMember(this.profileId, this.signer, this.address, this.rendezvous, this.spec, this.light);
 
   final String profileId;
   final Signer signer;
   final String address;
-  final String invite;
+
+  /// The network's meeting point (TestnetSpec.rendezvousSeeds).
+  final String rendezvous;
   final TestnetSpec spec;
   final LightClient light;
-  final String? founderAddress;
 
   int balance = 0;
   int nonce = 0;
@@ -140,9 +141,9 @@ class _Member {
   /// The circle this member keeps files for.
   late String keepCircle = spec.circleId;
 
-  /// The founder's I2P address (null for the founder): where the circle's
-  /// log comes from.
-  String? founderAddress;
+  /// The network's meeting point, which this member answers for too
+  /// (TestnetSpec.rendezvousSeeds).
+  String rendezvous = '';
   Map<String, String> files = {};
   Corpus? corpus;
   String? corpusError;
@@ -201,9 +202,12 @@ class ChainWorker {
         final bytes = m[3] as Uint8List;
         final inbound = Inbound(m[1] as String, m[2] as String, bytes);
         _link._in.add(inbound);
-        // Answers to this worker's own requests (spec, log).
+        // Answers to this worker's own requests (log, checkpoint, peers),
+        // and the meeting point's traffic.
         final msg = _parts.add(inbound);
-        if (msg != null && msg['id'] != null && const {'spec', 'log', 'checkpoint', 'snapshot'}.contains(msg['t'])) {
+        if (msg == null) break;
+        _onMeeting(inbound, msg);
+        if (msg['id'] != null && const {'peers', 'log', 'checkpoint', 'snapshot'}.contains(msg['t'])) {
           _waiting.remove('${msg['id']}')?.complete(msg);
         }
       case 'signed':
@@ -224,6 +228,44 @@ class ChainWorker {
     }
   }
 
+  // ---- Finding peers ----
+
+  /// Full nodes this member knows (light ones ask, they do not serve).
+  static Iterable<String> _fullPeers(_Member m) => m.node.peers.where((p) => !m.node.lightPeers.contains(p));
+
+  void _sendMsg(String from, String to, Map<String, Object?> msg) {
+    for (final part in Reassembly.split(msg)) {
+      _out(['send', to, encodeChainMessage(part), from]);
+    }
+  }
+
+  /// A hello to the meeting point: whichever full node gets it answers
+  /// with its own address and the full nodes it knows.
+  void _hello(String from, String rendezvous, {required bool full}) =>
+      _sendMsg(from, rendezvous, {'t': 'hello', 'full': full});
+
+  void _onMeeting(Inbound m, Map msg) {
+    switch (msg['t']) {
+      case 'hello':
+        final member = _members.values.where((x) => x.rendezvous == m.to && x.address != m.from).firstOrNull;
+        if (member == null) return;
+        if (msg['full'] == true) member.node.peers.add(m.from);
+        _sendMsg(member.address, m.from, {
+          't': 'peers',
+          'peers': [member.address, ..._fullPeers(member).where((p) => p != m.from).take(15)],
+          if (msg['id'] != null) 'id': msg['id'],
+        });
+      case 'peers':
+        final found = [for (final p in msg['peers'] as List? ?? const []) '$p'];
+        for (final x in _members.values.where((x) => x.address == m.to)) {
+          x.node.peers.addAll(found.where((p) => p != x.address));
+        }
+        for (final x in _lights.values.where((x) => x.address == m.to)) {
+          x.light.peers.addAll(found.where((p) => p != x.address));
+        }
+    }
+  }
+
   Future<Map<String, Object?>> _command(String name, Map<String, Object?> a) async {
     final light = _lights[a['profile']];
     if (light != null && name != 'join') return _lightCommand(light, name, a);
@@ -232,8 +274,9 @@ class ChainWorker {
         // A founder's spec from their collection's files.
         final params = a['params'] == null ? ChainParams.testnet : ChainParams.fromJson(a['params'] as Map);
         final paths = (a['paths'] as List).cast<String>();
-        final (files, corpus, _) = await _offCorpusOfPaths(params, paths);
+        final (files, corpus, bySha) = await _offCorpusOfPaths(params, paths);
         final spec = TestnetSpec.create(
+          names: {for (final e in bySha.entries) e.key: e.value.split('/').last},
           founder: a['founder'] as String,
           collectionOwner: a['founder'] as String,
           collectionId: a['collection'] as String,
@@ -244,11 +287,11 @@ class ChainWorker {
           params: params,
         );
         return {'spec': spec.json};
-      case 'fetchSpec':
-        final reply = await _ask(a['from'] as String, a['to'] as String, {'t': 'getSpec'});
-        final spec = TestnetSpec((reply['spec'] as Map).cast<String, Object?>());
-        if (spec.hash != a['hash']) return {'error': 'The testnet this address serves is not the one in the invite.'};
-        return {'spec': spec.json};
+      case 'peers':
+        // The full nodes a member found: where its copy of the corpus comes
+        // from.
+        final m = _members[a['profile']];
+        return {'peers': m == null ? const <String>[] : _fullPeers(m).toList()};
       case 'join':
         await _join(a);
         return {};
@@ -370,7 +413,7 @@ class ChainWorker {
   /// Sends [msg] from [from] to [to] and waits for the answer, sending it
   /// again every 10 seconds: the first messages over a new I2P tunnel are
   /// often lost.
-  Future<Map> _ask(String from, String to, Map<String, Object?> msg) async {
+  Future<Map> _ask(String from, String to, Map<String, Object?> msg, {Duration wait = const Duration(seconds: 90)}) async {
     final id = 'w${_nextId++}';
     final c = Completer<Map>();
     _waiting[id] = c;
@@ -383,7 +426,7 @@ class ChainWorker {
     send();
     final again = Timer.periodic(const Duration(seconds: 10), (_) => send());
     try {
-      return await c.future.timeout(const Duration(seconds: 90));
+      return await c.future.timeout(wait);
     } on TimeoutException {
       throw TimeoutException('No answer over I2P. Is the other device online?');
     } finally {
@@ -427,22 +470,38 @@ class ChainWorker {
         await snap.rename('${snap.path}.unreadable');
       }
     }
-    // A newcomer starts from the founder's recent state, not from genesis:
-    // nodes keep no blocks older than their own snapshot.
-    final founder = a['founderAddress'] as String?;
-    if (node == null && founder != null) {
-      final boot = await _bootstrap(spec, address, founder);
-      if (boot != null) {
-        node = ChainNode.fromSnapshot(
-          boot,
-          params: spec.params,
-          genesisRoot: genesis.rootHex,
-          address: address,
-          link: _link,
-          signer: signer,
-          peers: peers,
-        );
+    // A newcomer starts from a full node's recent state, not from genesis:
+    // nodes keep no blocks older than their own snapshot. It finds them at
+    // the network's meeting point. Only the founder starts from genesis.
+    final rendezvous = a['rendezvous'] as String;
+    if (node == null && spec.founder != a['pubkey']) {
+      // A meeting point whose lease set was just published can take a few
+      // minutes to be found.
+      final reply = await _ask(address, rendezvous, {'t': 'hello', 'full': true}, wait: const Duration(minutes: 4));
+      final found = [for (final p in reply['peers'] as List? ?? const []) '$p'].where((p) => p != address).toList();
+      peers.addAll(found.where((p) => !peers.contains(p)));
+      Object? lastError;
+      for (final p in found) {
+        try {
+          final boot = await _bootstrap(spec, address, p);
+          if (boot != null) {
+            node = ChainNode.fromSnapshot(
+              boot,
+              params: spec.params,
+              genesisRoot: genesis.rootHex,
+              address: address,
+              link: _link,
+              signer: signer,
+              peers: peers,
+            );
+          }
+          lastError = null;
+          break;
+        } catch (e) {
+          lastError = e;
+        }
       }
+      if (lastError != null) throw lastError;
     }
     node ??= ChainNode(
       params: spec.params,
@@ -455,7 +514,7 @@ class ChainWorker {
     final m = _Member(profile, signer, address, a['arcaAddress'] as String, dir, spec, node)
       ..keep = {...(a['keep'] as List? ?? const []).cast<int>()}
       ..files = (a['files'] as Map? ?? const {}).cast<String, String>()
-      ..founderAddress = a['founderAddress'] as String?;
+      ..rendezvous = rendezvous;
     m.miningWanted = a['mining'] as bool? ?? true;
     _applyPower(m);
     m.keepCircle = a['keepCircle'] as String? ?? spec.circleId;
@@ -484,8 +543,6 @@ class ChainWorker {
     }
     Future<Map<String, Object?>?> answer(String from, Map msg) async {
       switch (msg['t']) {
-        case 'getSpec':
-          return {'t': 'spec', 'spec': spec.json};
         case 'getLog' when m.logs.containsKey(msg['circle'] ?? spec.circleId):
           return {
             't': 'log',
@@ -509,24 +566,22 @@ class ChainWorker {
   void _joinLight(Map<String, Object?> a) {
     final profile = a['profile'] as String;
     final spec = TestnetSpec((a['spec'] as Map).cast<String, Object?>());
-    final founder = a['founderAddress'] as String?;
     final light = LightClient(
       params: spec.params,
       genesisRoot: spec.genesis().rootHex,
       genesisTick: spec.genesisTick,
       address: a['address'] as String,
       link: _link,
-      peers: [?founder],
+      // The full nodes it followed before; more come from the meeting point.
+      peers: (a['peers'] as List? ?? const []).cast<String>(),
     );
     final m = _LightMember(
       profile,
       _RemoteSigner(this, profile, a['pubkey'] as String),
       a['address'] as String,
-      // A light node serves no spec: its invite names the founder.
-      a['founderArca'] == null ? '' : TestnetSpec.invite(spec.hash, a['founderArca'] as String),
+      a['rendezvous'] as String,
       spec,
       light,
-      founder,
     );
     _lights[profile] = m;
     light.start();
@@ -535,6 +590,7 @@ class ChainWorker {
 
   Future<void> _lightTick(_LightMember m) async {
     m.ticks++;
+    if (m.ticks % (m.light.peers.isEmpty ? 15 : 300) == 1) _hello(m.address, m.rendezvous, full: false);
     // Waiting transactions again every ten seconds: a full node may not
     // have heard them.
     if (m.ticks % 10 == 0) {
@@ -600,7 +656,6 @@ class ChainWorker {
     return {
       'light': true,
       'spec': m.spec.hash,
-      'invite': m.invite,
       'name': m.spec.corpusName,
       'founder': false,
       'height': m.light.height,
@@ -668,7 +723,7 @@ class ChainWorker {
       case 'claim':
         final c = m.circle;
         if (c == null) return {'error': 'The circle is not read yet; try again in a moment.'};
-        final r = await _claimBody(m.spec, m.spec.circleId, c, m.pubkey, null, m.address, m.founderAddress);
+        final r = await _claimBody(m.spec, m.spec.circleId, c, m.pubkey, null, m.address, m.light.peers.firstOrNull);
         if (r['body'] case final Map body) {
           await _lightSubmit(m, TxType.claim, body.cast<String, Object?>());
           return {'claimed': r['owed']};
@@ -686,14 +741,14 @@ class ChainWorker {
     return {'error': 'Keeping files and running the circle need the full mode on this device.'};
   }
 
-  /// The founder's head header (a checkpoint, trusted on first use like the
-  /// invite itself) and the state after it, every namespace checked against
+  /// A full node's head header (a checkpoint, trusted on first use) and the
+  /// state after it, every namespace checked against
   /// the header's state root. Null when the chain has no block yet.
   Future<Map<String, Object?>?> _bootstrap(TestnetSpec spec, String from, String to) async {
     final cp = await _ask(from, to, {'t': 'getCheckpoint'});
     if (cp['header'] == null) return null;
     final header = Header.fromJson(cp['header'] as Map);
-    if (!header.signed) throw StateError('The founder\'s checkpoint is not signed.');
+    if (!header.signed) throw StateError('The checkpoint a peer sent is not signed.');
     final entries = <String, Map<String, String>>{};
     List<String>? roots;
     for (final ns in ChainState.namespaces) {
@@ -708,11 +763,11 @@ class ChainWorker {
       entries[ns] = got;
     }
     if (toHex(ChainState.stateRootOf([for (final r in roots!) fromHex(r)])) != header.stateRoot) {
-      throw StateError('The founder\'s state is not the one its checkpoint names.');
+      throw StateError('A peer\'s state is not the one its checkpoint names.');
     }
     for (var i = 0; i < ChainState.namespaces.length; i++) {
       if (toHex(smtRoot(entries[ChainState.namespaces[i]]!)) != roots[i]) {
-        throw StateError('The founder\'s ${ChainState.namespaces[i]} do not match their root.');
+        throw StateError('A peer\'s ${ChainState.namespaces[i]} do not match their root.');
       }
     }
     return {'block': header.asBlock.toJson(), 'work': cp['work'], 'state': entries};
@@ -825,6 +880,9 @@ class ChainWorker {
 
   void _tick(_Member m) {
     m.ticks++;
+    // Keeps meeting other full nodes: often while it knows none, then now
+    // and then, so the network stays joined up as nodes come and go.
+    if (m.ticks % (_fullPeers(m).isEmpty ? 30 : 300) == 1) _hello(m.address, m.rendezvous, full: true);
     // Declarations can be lost with a fork; keep checking.
     if (m.ticks % 30 == 0) {
       unawaited(_prepare(m));
@@ -854,7 +912,6 @@ class ChainWorker {
     final dayStart = s.genesisTick + s.day * params.dayTicks;
     return {
       'spec': m.spec.hash,
-      'invite': TestnetSpec.invite(m.spec.hash, m.arcaAddress),
       'name': m.spec.corpusName,
       'founder': m.spec.founder == m.pubkey,
       'height': s.height,
@@ -991,7 +1048,7 @@ class ChainWorker {
   Future<Map<String, Object?>> _claim(_Member m, String circleId) async {
     final circle = m.node.state.circles[circleId];
     if (circle == null) return {'error': 'No such circle on the chain.'};
-    final r = await _claimBody(m.spec, circleId, circle, m.pubkey, m.logs[circleId], m.address, m.founderAddress);
+    final r = await _claimBody(m.spec, circleId, circle, m.pubkey, m.logs[circleId], m.address, _fullPeers(m).firstOrNull);
     if (r['body'] case final Map body) {
       await m.node.submit(TxType.claim, body.cast<String, Object?>());
       return {'claimed': r['owed']};

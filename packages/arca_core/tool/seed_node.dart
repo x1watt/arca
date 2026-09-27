@@ -1,15 +1,18 @@
-// A seed node: a headless Arca that founds the public test network and
-// keeps it going (docs/seed-node.md). It shares one collection, which is
-// the network's corpus, keeps and proves every partition of it, mines, and
-// serves the spec, the circle log and the files to whoever joins.
+// A seed node: a headless Arca that founds the test network and keeps it
+// going (docs/seed-node.md). It shares one collection, which is the
+// network's corpus, keeps and proves every partition of it, mines, answers
+// at the network's meeting point, and serves the circle log and the files
+// to whoever joins.
 //
 //   dart run tool/seed_node.dart <data dir> [--name=<collection>] <file>...
 //
 // The first run creates the collection from the files and starts the test
 // network; later runs take no files and pick up where the last one stopped.
-// The invite is printed and written to <data dir>/invite.txt. SIGINT or
-// SIGTERM stops it cleanly.
+// The network's spec goes to <data dir>/spec.json: built into the app
+// (TestnetSpec._builtInSpec), it makes every copy of Arca find this network
+// by itself. SIGINT or SIGTERM stops it cleanly.
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:arca_core/arca_core.dart';
@@ -88,15 +91,15 @@ Future<void> main(List<String> args) async {
       exit(1);
     }
   }
-  while (chain?['invite'] == null) {
+  while (chain?['height'] == null) {
     await Future<void>.delayed(const Duration(seconds: 1));
     s = await core.handle('state', {});
     chain = s['chain'] as Map?;
     if (s['chainError'] != null) say('chain: ${s['chainError']}');
   }
-  final invite = chain!['invite'] as String;
-  File('$dir/invite.txt').writeAsStringSync('$invite\n');
-  say('invite: $invite');
+  final spec = (await core.handle('chainSpec', {}))['spec'];
+  File('$dir/spec.json').writeAsStringSync(jsonEncode(spec));
+  say('network ${chain!['spec']}, spec in $dir/spec.json');
 
   // A line a minute, for the service's log.
   while (!stopping) {

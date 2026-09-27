@@ -658,7 +658,6 @@ class ChainCircleView {
 /// and its circle's pool.
 class ChainView {
   const ChainView({
-    required this.invite,
     required this.name,
     required this.founder,
     required this.height,
@@ -697,7 +696,6 @@ class ChainView {
 
   /// What creating a circle burns, in grains.
   final int circleFee;
-  final String invite;
   final String name;
   final bool founder;
   final int height;
@@ -749,7 +747,6 @@ class ChainView {
     final circle = m['circle'] as Map?;
     final reading = m['reading'] as Map?;
     return ChainView(
-      invite: m['invite'] as String,
       name: m['name'] as String,
       founder: m['founder'] as bool,
       height: m['height'] as int,
@@ -883,7 +880,7 @@ class CoreState {
     this.chain,
     this.chainPending = false,
     this.chainError,
-    this.publicInvite,
+    this.testnetName,
     this.sharing = const SharingView(),
     this.searches = const [],
     this.opened = const [],
@@ -915,8 +912,8 @@ class CoreState {
   /// Why the test network could not start on this device, if it could not.
   final String? chainError;
 
-  /// The public test network's invite, when there is one.
-  final String? publicInvite;
+  /// The name of the test network built into this version, if any.
+  final String? testnetName;
   final SharingView sharing;
 
   /// This profile's recent searches, newest first.
@@ -1077,7 +1074,7 @@ class Core {
       chain: ChainView.fromMap(result['chain'] as Map?),
       chainPending: result['chainPending'] as bool? ?? false,
       chainError: result['chainError'] as String?,
-      publicInvite: result['publicInvite'] as String?,
+      testnetName: (result['testnet'] as Map?)?['name'] as String?,
       sharing: SharingView.fromMap(result['sharing'] as Map?),
       searches: [
         for (final e in result['searches'] as List? ?? const [])
@@ -1328,10 +1325,7 @@ class Core {
 
   // The test chain and the wallet.
 
-  Future<String?> chainStart(String collection) =>
-      _change('chainStart', {'collection': collection});
-  Future<String?> chainJoin(String invite) =>
-      _change('chainJoin', {'invite': invite});
+  Future<String?> chainJoin() => _change('chainJoin', {});
   Future<String?> chainLeave() => _change('chainLeave');
   Future<String?> chainSend(String to, String amount) =>
       _change('chainSend', {'to': to, 'amount': amount});

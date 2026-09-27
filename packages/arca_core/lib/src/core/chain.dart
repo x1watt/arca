@@ -101,11 +101,15 @@ extension _Chain on CoreService {
       await _chainResumeUnsafe(id);
       _chainErrors.remove(id);
     } catch (e) {
-      // Shown on the wallet's waiting page; tried again on the next change.
+      // Shown on the wallet's waiting page, and tried again in a minute (no
+      // node of the network may be online yet).
       _chainJoined.remove(id);
       _chainErrors[id] = '$e';
       stderr.writeln('chain: could not start for $id: $e');
       _push();
+      Timer(const Duration(minutes: 1), () {
+        if (!_closing && _chainErrors.containsKey(id)) unawaited(_chainResume(id));
+      });
     }
   }
 
@@ -120,10 +124,18 @@ extension _Chain on CoreService {
     }
     _chainJoined.add(id);
     _chainAddresses.add(address);
-    await _chainForward();
     final spec = TestnetSpec((config['spec'] as Map).cast<String, Object?>());
-    final founderI2p = config['founderI2p'] as String?;
     final p = _store.profiles.firstWhere((x) => x.id == id);
+    // Phones follow lightly unless told to keep files; the founder keeps
+    // the circle's log, so it is never light.
+    final light = spec.founder != p.pubkey && (config['light'] as bool? ?? _isPhone);
+    // The network's meeting point: newcomers ask there, and full nodes
+    // answer for it once they have joined. A node that answered before it
+    // had met anyone could hide the others there (its lease set replaces
+    // theirs until they merge) and would only hear its own hello.
+    final (enc, sign) = spec.rendezvousSeeds;
+    final rendezvous = await sharedDestinationAddress(enc, sign);
+    await _chainForward();
     final joined = await _chainCmd('join', {
       'profile': id,
       'pubkey': p.pubkey,
@@ -134,16 +146,16 @@ extension _Chain on CoreService {
       'keep': config['keep'],
       'mining': config['mining'] ?? true,
       'keepCircle': config['keepCircle'],
-      'founderAddress': founderI2p,
-      'founderArca': config['founderArca'],
-      // Phones follow lightly unless told to keep files; a founder serves
-      // the spec and the log, so it is never light.
-      'light': founderI2p != null && (config['light'] as bool? ?? _isPhone),
-      'peers': [?founderI2p],
+      'light': light,
+      'rendezvous': rendezvous,
+      'peers': const <String>[],
       'files': await _chainFiles(id, spec),
     });
     if (joined['error'] != null) throw StateError(joined['error'] as String);
-    _background(_chainWatchFiles(id, spec));
+    if (!light) {
+      _chainAddresses.add(await net.addShared(enc, sign));
+      _background(_chainWatchFiles(id, spec));
+    }
   }
 
   /// The corpus files this profile holds, by SHA-256: the founder's own
@@ -159,28 +171,45 @@ extension _Chain on CoreService {
         }
       }
     } else {
-      final store = await _syncStore(id);
-      for (final s in store.items.where((x) => x.owner == spec.corpusOwner && x.collection == spec.corpusCollection)) {
-        for (final e in s.files.entries.where((e) => wanted.contains(e.value))) {
-          if (await File('${s.folder}/${e.key}').exists()) out[e.value] = '${s.folder}/${e.key}';
-        }
+      final folder = _chainCorpusFolder(spec);
+      for (final e in spec.fileNames.entries) {
+        final path = '$folder/${e.value}';
+        if (await File(path).exists()) out[e.key] = path;
       }
     }
     return out;
   }
 
-  /// Until every corpus file is here (a joiner's copy still arriving), tells
-  /// the worker what arrived, every few seconds.
+  /// Where a device that keeps the test network's files holds its copy of
+  /// the corpus: a folder under the default storage folder, served to
+  /// others like any shared file.
+  String _chainCorpusFolder(TestnetSpec spec) => '$_defaultFolder/${spec.corpusName} (test network)';
+
+  /// Until every corpus file is here, fetches the missing ones by hash from
+  /// the full nodes the worker found and tells the worker what arrived.
   Future<void> _chainWatchFiles(String id, TestnetSpec spec) async {
     var sent = -1;
+    final folder = _chainCorpusFolder(spec);
+    final sizes = {for (final (sha, size) in spec.files) sha: size};
     while (!_closing && _chainJoined.contains(id)) {
       final files = await _chainFiles(id, spec);
       if (files.length != sent) {
         sent = files.length;
+        _shaPaths.remove(id); // served from here too now
         await _chainCmd('files', {'profile': id, 'files': files});
       }
       if (files.length == spec.files.length) return;
-      await Future<void>.delayed(const Duration(seconds: 5));
+      final peers = ((await _chainCmd('peers', {'profile': id}))['peers'] as List? ?? const []).cast<String>();
+      final blobs = net.blobsOf(id);
+      if (peers.isEmpty || blobs == null) {
+        await Future<void>.delayed(const Duration(seconds: 10));
+        continue;
+      }
+      await Directory(folder).create(recursive: true);
+      for (final e in spec.fileNames.entries) {
+        if (_closing || files.containsKey(e.key)) continue;
+        await blobs.fetch(e.key, sizes[e.key]!, peers, '$folder/${e.value}', reader: await _readerSession(id));
+      }
     }
   }
 
@@ -212,68 +241,26 @@ extension _Chain on CoreService {
     return null;
   }
 
-  /// Joins the testnet an invite names: fetches its spec from the address
-  /// in the invite, follows the founder and keeps a copy of the corpus.
-  Future<Map<String, Object?>?> _chainJoin(String invite, {bool? light}) async {
+  /// Takes part in the test network built into Arca (or [spec], in tests
+  /// and tools). Nothing is passed by hand: the node finds the others at
+  /// the network's meeting point, and a device that keeps files fetches
+  /// them by hash from the peers it found.
+  Future<Map<String, Object?>?> _chainJoin({bool? light, Map<String, Object?>? spec}) async {
     final id = _activeId;
-    if (await _chainConfig(id) != null) return {'error': 'This profile already takes part in a testnet.'};
-    final parsed = TestnetSpec.parseInvite(invite);
-    if (parsed == null) return {'error': 'That is not an Arca testnet invite.'};
-    final (hash, arca) = parsed;
-    final (pubkey, i2p) = parseArcaAddress(arca);
-    if (pubkey == _pubkeyOf(id)) return {'error': 'That is your own invite.'};
-    // Right after Arca starts, I2P can take a few minutes to come up.
-    var me = net.addressOf(id);
-    for (var i = 0; me == null && i < 180 && !_closing; i++) {
-      await Future<void>.delayed(const Duration(seconds: 1));
-      me = net.addressOf(id);
-    }
-    if (me == null) return {'error': 'The I2P network is not up yet. Try again in a minute.'};
-    await _chainForward();
-    // The spec comes back to our address, which the worker must hear.
-    _chainAddresses.add(me);
-    final got = await _chainCmd('fetchSpec', {'from': me, 'to': i2p, 'hash': hash});
-    if (got['error'] != null) {
-      _chainAddresses.remove(me);
-      return got;
-    }
-    final spec = TestnetSpec((got['spec'] as Map).cast<String, Object?>());
-    // A device that keeps files copies the corpus; a light one does not.
-    final isLight = light ?? _isPhone;
-    if (!isLight) {
-      final error = await _chainCopyCorpus(id, spec, i2p);
-      if (error != null) return {'error': error};
-    }
+    if (await _chainConfig(id) != null) return {'error': 'This profile already takes part in the test network.'};
+    final s = spec != null ? TestnetSpec(spec) : TestnetSpec.builtIn;
+    if (s == null) return {'error': 'This version of Arca has no test network built in.'};
     await _saveChainConfig(id, {
-      'spec': spec.json,
-      'founderI2p': i2p,
-      'founderArca': arca,
-      'light': isLight,
-      'keep': [for (var i = 0; i < spec.partitionSizes.length; i++) i],
+      'spec': s.json,
+      'light': light ?? _isPhone,
+      'keep': [for (var i = 0; i < s.partitionSizes.length; i++) i],
       'mining': true,
     });
-    _chainAddresses.remove(me);
     _chainNone.remove(id);
-    await _chainResume(id);
-    return null;
-  }
-
-  /// Follows the corpus's owner and keeps a copy of the collection.
-  Future<String?> _chainCopyCorpus(String id, TestnetSpec spec, String ownerI2p) async {
-    final fs = await _followStore(id);
-    var f = fs.byPubkey(spec.corpusOwner);
-    if (f == null) {
-      f = Follow(pubkey: spec.corpusOwner, address: ownerI2p);
-      fs.follows.add(f);
-      await fs.save();
-    }
-    await _refreshFollow(id, f);
-    if (!f.collections.containsKey(spec.corpusCollection)) {
-      return 'Could not read the corpus collection from the founder. Try again when both are online.';
-    }
-    final s = await _syncEntry(id, f, spec.corpusCollection);
-    _background(_syncOne(id, f, s));
-    return null;
+    // Right after Arca starts, I2P can take a few minutes to come up; the
+    // chain starts by itself once it is.
+    if (net.addressOf(id) != null) await _chainResume(id);
+    return _chainErrors[id] == null ? null : {'error': _chainErrors[id]};
   }
 
   Future<Map<String, Object?>?> _chainLeave() async {
@@ -362,9 +349,14 @@ extension _Chain on CoreService {
         // Tests pass faster rules; the app always uses the testnet's.
         return _chainStart(args['collection'] as String, params: (args['params'] as Map?)?.cast<String, Object?>());
       case 'chainJoin':
-        return _chainJoin(args['invite'] as String, light: args['light'] as bool?);
+        return _chainJoin(light: args['light'] as bool?, spec: (args['spec'] as Map?)?.cast<String, Object?>());
       case 'chainLeave':
         return _chainLeave();
+      case 'chainSpec':
+        // The spec of the network this profile takes part in (the seed node
+        // writes it out to be built into the app).
+        final config = await _chainConfig(id);
+        return config == null ? {'error': 'This profile takes part in no test network.'} : {'spec': config['spec']};
       case 'chainSend':
         final to = _keyOf(args['to'] as String? ?? '');
         if (to == null) return {'error': 'Enter an npub or an Arca address.'};
@@ -395,14 +387,10 @@ extension _Chain on CoreService {
       case 'chainLight':
         final config = await _chainConfig(id);
         if (config == null) return {'error': 'This profile takes part in no testnet.'};
-        if (config['founderI2p'] == null) return {'error': 'The founder\'s device always keeps the files.'};
+        final spec = TestnetSpec((config['spec'] as Map).cast<String, Object?>());
+        if (spec.founder == _pubkeyOf(id)) return {'error': 'The founder\'s device always keeps the files.'};
+        // Keeping files fetches the corpus from the peers once it runs.
         config['light'] = args['on'] == true;
-        if (!(config['light'] as bool)) {
-          // Keeping files needs the corpus: copy it now.
-          final spec = TestnetSpec((config['spec'] as Map).cast<String, Object?>());
-          final error = await _chainCopyCorpus(id, spec, config['founderI2p'] as String);
-          if (error != null) return {'error': error};
-        }
         await _saveChainConfig(id, config);
         // Restart this profile's part of the chain in the other mode.
         if (_chainJoined.remove(id)) await _chainCmd('leave', {'profile': id});

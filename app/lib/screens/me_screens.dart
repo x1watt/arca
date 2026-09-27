@@ -91,9 +91,9 @@ class CirclesScreen extends StatelessWidget {
               if (chain == null)
                 ListTile(
                   leading: const Icon(Icons.toll_outlined),
-                  title: const Text('Not on a test network'),
+                  title: const Text('Not on the test network'),
                   subtitle: Text(
-                    'Start or join one in the wallet.',
+                    'Take part in it from the wallet.',
                     style: muted,
                   ),
                   trailing: const Icon(Icons.chevron_right),
@@ -338,8 +338,9 @@ class HelpScreen extends StatelessWidget {
     (
       Icons.toll_outlined,
       'The test network and marcas',
-      'Marcas pay people for keeping files safe. On the test network, which starts from one of someone\'s '
-          'collections, devices keep copies, prove every day that they still hold them, and earn for their circle. '
+      'Marcas pay people for keeping files safe. On the test network, which is built into Arca and found over I2P '
+          'without any address to type, devices keep copies of its files, prove every day that they still hold '
+          'them, and earn for their circle. '
           'The circle\'s admin pays out its pool; members claim their share. Test marcas have no value. Phones '
           'follow lightly by default and keep nothing, so they cost little battery.',
     ),

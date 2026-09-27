@@ -8,7 +8,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
-import '../widgets/collab.dart' show askText;
 import '../widgets/common.dart';
 
 class WalletScreen extends StatelessWidget {
@@ -99,54 +98,9 @@ class _NotOnChainState extends State<_NotOnChain> {
     }
   }
 
-  Future<void> _start() async {
-    final collections = widget.state.collections
-        .where((c) => c.files.isNotEmpty)
-        .toList();
-    if (collections.isEmpty) {
-      showMessage(
-        context,
-        'Add files to a collection first: a test network starts from one of your collections.',
-      );
-      return;
-    }
-    final picked = await showDialog<String>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: const Text('Start a test network from'),
-        children: [
-          for (final c in collections)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, c.id),
-              child: ListTile(
-                leading: const Icon(Icons.folder_outlined),
-                title: Text(c.name),
-                subtitle: Text(
-                  '${plural(c.files.length, 'file')}, ${formatBytes(c.size)}',
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-    if (picked == null || !mounted) return;
-    await _do(() => Core.instance.chainStart(picked));
-  }
-
-  Future<void> _join() async {
-    final invite = await askText(
-      context,
-      title: 'Join a test network',
-      label: 'Invite',
-      hint: 'arca-chain:...',
-    );
-    if (invite == null || invite.isEmpty || !mounted) return;
-    await _do(() => Core.instance.chainJoin(invite));
-  }
-
   @override
   Widget build(BuildContext context) {
-    final public = widget.state.publicInvite;
+    final name = widget.state.testnetName;
     return EmptyState(
       icon: Icons.toll_outlined,
       title: _error != null
@@ -154,48 +108,28 @@ class _NotOnChainState extends State<_NotOnChain> {
           : 'Marcas are earned by keeping files',
       text: _error != null
           ? _error!
+          : name == null
+          ? 'Keep a copy of a circle\'s files and prove it every day, and the chain pays your circle in marcas. '
+                'This version of Arca has no test network built in yet.'
           : 'Keep a copy of a circle\'s files and prove it every day, and the chain pays your circle in marcas. '
-                'This is a test network: its marcas have no value. '
-                '${public != null ? 'Join the public one, start your own from one of your collections, or join '
-                          'another with an invite.' : 'Start one from one of your collections, or join one with an '
-                          'invite from someone who started it.'}',
+                'Arca has one test network, "$name"; its marcas have no value. This device finds the others by '
+                'itself. A computer keeps a copy of the files and earns; a phone follows lightly.',
       action: _busy
           ? const Column(
               children: [
                 CircularProgressIndicator(),
                 SizedBox(height: 12),
-                Text('Setting up. Joining can take a minute over I2P.'),
-              ],
-            )
-          : Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              alignment: WrapAlignment.center,
-              children: [
-                if (public != null)
-                  FilledButton.icon(
-                    onPressed: () => _do(() => Core.instance.chainJoin(public)),
-                    icon: const Icon(Icons.public),
-                    label: const Text('Join the public test network'),
-                  ),
-                if (public != null)
-                  OutlinedButton.icon(
-                    onPressed: _start,
-                    icon: const Icon(Icons.play_arrow_outlined),
-                    label: const Text('Start a test network'),
-                  )
-                else
-                  FilledButton.icon(
-                    onPressed: _start,
-                    icon: const Icon(Icons.play_arrow_outlined),
-                    label: const Text('Start a test network'),
-                  ),
-                OutlinedButton.icon(
-                  onPressed: _join,
-                  icon: const Icon(Icons.group_add_outlined),
-                  label: const Text('Join with an invite'),
+                Text(
+                  'Finding the network over I2P. This can take a minute or two.',
                 ),
               ],
+            )
+          : name == null
+          ? null
+          : FilledButton.icon(
+              onPressed: () => _do(Core.instance.chainJoin),
+              icon: const Icon(Icons.play_arrow_outlined),
+              label: const Text('Take part in the test network'),
             ),
     );
   }
@@ -300,11 +234,6 @@ class _OnChain extends StatelessWidget {
                             : () => _copy(context, me.npub, 'Your address'),
                         icon: const Icon(Icons.qr_code_2_outlined),
                         label: const Text('Receive'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: () => _copy(context, chain.invite, 'Invite'),
-                        icon: const Icon(Icons.person_add_alt),
-                        label: const Text('Copy invite'),
                       ),
                     ],
                   ),

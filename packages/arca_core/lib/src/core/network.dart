@@ -274,6 +274,9 @@ class NetworkManager {
     for (final p in _wanted.values.toList()) {
       await _attach(p);
     }
+    for (final (enc, sign) in _shared.values) {
+      await backend.addDestination(enc, sign);
+    }
     _probeTimer ??= Timer.periodic(probeEvery, (_) => _probe());
     _lastBeat = DateTime.now();
     _beatTimer ??= Timer.periodic(heartbeat, (_) => _beat());
@@ -377,6 +380,18 @@ class NetworkManager {
   }
 
   bool isWanted(String profileId) => _wanted.containsKey(profileId);
+
+  final _shared = <String, (Uint8List, Uint8List)>{};
+
+  /// Answers for an address whose keys other nodes hold too (a test
+  /// network's meeting point), now and after every start. Returns it.
+  Future<String> addShared(Uint8List encSeed, Uint8List signSeed) async {
+    final a = await sharedDestinationAddress(encSeed, signSeed);
+    if (_shared.containsKey(a)) return a;
+    _shared[a] = (encSeed, signSeed);
+    if (state == NetState.up) await backend.addDestination(encSeed, signSeed);
+    return a;
+  }
 
   Future<void> _attach(OnlineProfile p) async {
     final address = await backend.addDestination(p.i2pEncSeed, p.i2pSignSeed);

@@ -39,6 +39,14 @@ extension _Collaboration on CoreService {
           map[e.value] = '${s.folder}/${e.key}';
         }
       }
+      // The copy of the test network's corpus, served to newcomers.
+      final chain = await _chainConfig(profileId);
+      if (chain != null) {
+        final spec = TestnetSpec((chain['spec'] as Map).cast<String, Object?>());
+        for (final e in spec.fileNames.entries) {
+          map.putIfAbsent(e.key, () => '${_chainCorpusFolder(spec)}/${e.value}');
+        }
+      }
       _shaPaths[profileId] = map;
     }
     final path = map[sha256];

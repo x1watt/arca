@@ -1,7 +1,9 @@
-// A light device joins a test network by invite, follows it, restarts and
-// must follow it again (the C61 once stayed at "block 0" after an update).
+// A light device joins a test network, finding it at its meeting point,
+// follows it, restarts and must follow it again (the C61 once stayed at
+// "block 0" after an update).
 //
-//   dart run tool/light_join_check.dart <data dir> <invite> <minutes each>
+//   dart run tool/light_join_check.dart <data dir> <spec.json> <minutes each>
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:arca_core/arca_core.dart';
@@ -36,9 +38,10 @@ Future<int> follow(CoreService c, int minutes) async {
 }
 
 Future<void> main(List<String> args) async {
-  final dir = args[0], invite = args[1], minutes = int.parse(args[2]);
+  final dir = args[0], minutes = int.parse(args[2]);
+  final spec = jsonDecode(File(args[1]).readAsStringSync()) as Map;
   var c = await open(dir);
-  final r = await c.handle('chainJoin', {'invite': invite, 'light': true});
+  final r = await c.handle('chainJoin', {'spec': spec, 'light': true});
   print('${t()} join: ${r['error'] ?? 'ok'}');
   if (r['error'] != null) {
     await c.close();

@@ -35,9 +35,10 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 
 ## 4. A public test network
 
-- [x] A seed node: a headless founder (`tool/seed_node.dart`), run as a service, that keeps a public collection and the test network going. Tried on I2P: founds the network, stops cleanly on SIGTERM, resumes with the same invite, and a desktop app joined it with one button. A restart used to cut it off from its peers for up to ten minutes (they held its old tunnels); nodes now remember their peers (`docs/performance.md`, 3.16).
-- [ ] Run the seed somewhere that stays on, with a public-domain corpus, and put its invite in `TestnetSpec._publicInvite`.
-- [x] A default invite in the app, so joining needs no invite passed by hand (`TestnetSpec.publicInvite`, shown in the wallet as "Join the public test network"; `ARCA_PUBLIC_INVITE` replaces it).
+- [x] A seed node: a headless founder (`tool/seed_node.dart`), run as a service, that keeps a public collection and the test network going. Tried on I2P: founds the network, stops cleanly on SIGTERM, resumes where it stopped, and a desktop app joined it with one button. A restart used to cut it off from its peers for up to ten minutes (they held its old tunnels); nodes now remember their peers (`docs/performance.md`, 3.16).
+- [x] No invites: the test network is built into the app (`TestnetSpec.builtIn`), and nodes find each other at a meeting point, an I2P address made from the network's spec that every full node answers for; a new full node fetches the corpus by hash from the nodes it met (`docs/architecture.md` 10).
+- [ ] Run the seed somewhere that stays on, with a public-domain corpus, and put its `spec.json` in `TestnetSpec._builtInSpec`.
+- [x] Joining with one button: "Take part in the test network" in the wallet.
 - [x] Docs for running a seed node and for joining (`docs/seed-node.md`).
 
 ## Later
