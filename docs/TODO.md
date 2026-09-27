@@ -29,8 +29,8 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 ## 3. Harden I2P and the network
 
 - [x] Commit the `i2p-dart` gateway rotation fix (`docs/performance.md` 3.16) in its own repository, with a test, apart from the changes already pending there. (i2p-dart daa3e41: the rules are in `GatewayClock`, tested in `test/gateway_rotation_test.dart`.)
-- [ ] Reachability and sync over hours, not minutes (`tool/reach_check.dart`, `tool/live_sync_check.dart`), on the desktop and the C61.
-- [ ] Battery and data use on the C61 with the test network running, in light and full mode.
+- [x] Reachability and sync over hours, not minutes (`tool/reach_check.dart`, `tool/live_sync_check.dart`), on the desktop and the C61. Desktop: `live_sync_check --hours=3`, eleven rounds over 1.8 hours before the computer slept, none missed (median 89 s, worst 371 s). C61: 90 minutes following the seed without a gap. Found on the way and fixed: a node that is "up" but deaf (probes and a restart, `docs/performance.md` 3.17), a seed deaf after the computer slept (a heartbeat), a crash when restarting I2P (`i2p-dart` ac150c1), and a restarted seed cut off from its peers (3.16).
+- [x] Battery and data use on the C61 with the test network running, in light and full mode (`docs/performance.md` 3.18). Light: 4.9% of a core, 15.9 MB/h in, 9.3 MB/h out, after cutting the wallet's reads (was 36.7 MB/h in). Full: 11%, 11.7 MB/h in, 15.5 MB/h out. With the screen off Android freezes Arca: nothing is used and nothing is followed; it follows again within minutes of waking. The phone charged throughout, so battery is given as processor time.
 - [x] Find out what sends long runs on this machine SIGTERM. It is earlyoom (`/etc/default/earlyoom`: `-m 10,5 --prefer=...dart...`): when free memory and swap both fall to 10% it stops a dart process first. It stopped 30 dart processes in a week (test runners, the compiler, `reach_check`). Long checks need free memory; the code is not at fault.
 
 ## 4. A public test network

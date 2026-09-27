@@ -205,6 +205,9 @@ Fix (`chain/worker.dart`): a light device reads at each new block only while a t
 |---|---|---|---|
 | Before (90 minutes) | 8.6% of one core | 36.7 MB/h | 25.7 MB/h |
 | After (25 minutes) | 4.9% of one core | 15.9 MB/h | 9.3 MB/h |
+| Keeping files and making blocks (30 minutes) | 11% of one core | 11.7 MB/h | 15.5 MB/h |
+
+Switching the C61 to keep files took 75 s of processor time and 7.6 MB in its first five minutes (the corpus, the snapshot, packing); within the day its part was kept and proven and it made blocks. A full node receives less than a light one: it gets each block once as it is made, where the light device asks.
 
 What remains is mostly following itself: a request for headers every block and the I2P node's own upkeep. Fewer requests carrying several headers each would halve it again.
 
