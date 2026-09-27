@@ -60,7 +60,7 @@ void main() {
   /// Two honest blocks, so the bad one has a parent header.
   Future<(ChainState, Header)> history() async {
     final b1 = await Block.produce(genesis, producer, [
-      Tx.sign(people[0], TxType.transfer, 0, {'to': pk(people[1]), 'amount': 5 * m}),
+      Tx.sign(people[0], TxType.burn, 0, {'amount': 5 * m}),
     ], tick: 1);
     final s1 = await b1.applyTo(genesis);
     return (s1, Header.of(b1));
@@ -69,7 +69,7 @@ void main() {
   test('an honest block has no fraud to show', () async {
     final (s1, h1) = await history();
     final b2 = await Block.produce(s1, producer, [
-      Tx.sign(people[2], TxType.transfer, 0, {'to': pk(people[3]), 'amount': 7 * m}),
+      Tx.sign(people[2], TxType.burn, 0, {'amount': 7 * m}),
       Tx.sign(people[4], TxType.burn, 0, {'amount': 1 * m}),
     ], tick: 2);
     await b2.applyTo(s1);
@@ -79,8 +79,8 @@ void main() {
   test('a transaction step with a wrong result is shown with a handful of entries', () async {
     final (s1, h1) = await history();
     final honest = await Block.produce(s1, producer, [
-      Tx.sign(people[2], TxType.transfer, 0, {'to': pk(people[3]), 'amount': 7 * m}),
-      Tx.sign(people[4], TxType.transfer, 0, {'to': pk(people[5]), 'amount': 1 * m}),
+      Tx.sign(people[2], TxType.burn, 0, {'amount': 7 * m}),
+      Tx.sign(people[4], TxType.burn, 0, {'amount': 1 * m}),
     ], tick: 2);
     // The producer claims another result for the first transaction.
     final bad = rewrite(honest, trace: [honest.trace[0], randomRoot(), honest.trace[2]]);
@@ -88,17 +88,17 @@ void main() {
     final proof = (await FraudProof.build(s1, h1, bad))!;
     expect(proof.json['step'], 1);
     final witness = proof.json['witness'] as Map;
-    expect(witness.keys.toSet(), {'meta', 'balances', 'nonces'});
-    expect(((witness['balances'] as Map)['values'] as Map).keys.toSet(), {pk(people[2]), pk(people[3])});
+    expect(witness.keys.toSet(), {'meta', 'balances', 'nonces', 'collections'});
+    expect(((witness['balances'] as Map)['values'] as Map).keys.toSet(), {pk(people[2])});
     // It travels as JSON and checks with the headers alone.
     await FraudProof(jsonRoundTrip(proof.json)).verify(p, genesisRoot: genesisRoot);
-    print('fraud proof for a transfer: ${canonicalJson(proof.json).length} bytes');
+    print('fraud proof for a burn: ${canonicalJson(proof.json).length} bytes');
   });
 
   test('a block including a transaction that breaks a rule is shown', () async {
     final (s1, h1) = await history();
     final honest = await Block.produce(s1, producer, const [], tick: 2);
-    final overspend = Tx.sign(people[6], TxType.transfer, 0, {'to': pk(people[7]), 'amount': 1000 * m});
+    final overspend = Tx.sign(people[6], TxType.burn, 0, {'amount': 1000 * m});
     final bad = rewrite(honest, txs: [overspend], trace: [honest.trace[0], randomRoot()]);
     final proof = (await FraudProof.build(s1, h1, bad))!;
     expect(proof.json['step'], 1);
@@ -154,7 +154,7 @@ void main() {
   test('a proof against an honest block, an altered value or a missing entry does not hold', () async {
     final (s1, h1) = await history();
     final honest = await Block.produce(s1, producer, [
-      Tx.sign(people[2], TxType.transfer, 0, {'to': pk(people[3]), 'amount': 7 * m}),
+      Tx.sign(people[2], TxType.burn, 0, {'amount': 7 * m}),
     ], tick: 2);
     final bad = rewrite(honest, trace: [honest.trace[0], randomRoot()]);
     final real = (await FraudProof.build(s1, h1, bad))!;
@@ -177,11 +177,11 @@ void main() {
     values[pk(people[2])] = '${1000000 * m}';
     await expectLater(FraudProof(altered).verify(p, genesisRoot: genesisRoot), throwsFraud('not the proven one'));
 
-    // The recipient's balance left out.
+    // The burner's balance left out.
     final missing = jsonRoundTrip(real.json);
     final balances = (missing['witness'] as Map)['balances'] as Map;
-    (balances['values'] as Map).remove(pk(people[3]));
-    (balances['proofs'] as List).removeWhere((p) => (p as Map)['key'] == pk(people[3]));
+    (balances['values'] as Map).remove(pk(people[2]));
+    (balances['proofs'] as List).removeWhere((p) => (p as Map)['key'] == pk(people[2]));
     await expectLater(FraudProof(missing).verify(p, genesisRoot: genesisRoot), throwsFraud('does not carry'));
 
     // A header the producer did not sign.

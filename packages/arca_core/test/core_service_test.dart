@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
@@ -62,7 +63,10 @@ void main() {
     final got = await b.query(a.address, [
       const NostrFilter(kinds: [0]),
     ]);
-    expect(got.single.content, '{"name":"Max"}');
+    // The name, and the wallet address contacts pay by npub.
+    final content = jsonDecode(got.single.content) as Map;
+    expect(content['name'], 'Max');
+    expect(content['marca'], startsWith('marca1'));
     expect(got.single.verify(), isTrue);
 
     // The owner's relay refuses unrelated events from others.

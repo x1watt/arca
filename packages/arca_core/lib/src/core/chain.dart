@@ -54,6 +54,17 @@ extension _Chain on CoreService {
               profile,
             ).then((key) async => (await _chainPort!).send(['signed', id, schnorrSign(key, message)])),
           );
+        case 'signPoint':
+          // An input of a private transaction: signed with t + b, the spend
+          // key never leaving the core.
+          final (id, profile, t, message) = (m[1] as int, m[2] as String, m[3] as String, m[4] as Uint8List);
+          unawaited(
+            _secretKey(profile).then((key) async {
+              final keys = WalletKeys.of(key);
+              final sig = pointSign(keys.oneTimeSecret(BigInt.parse(t, radix: 16)), message);
+              (await _chainPort!).send(['signed', id, sig]);
+            }),
+          );
         case 'stopped':
           _chainStopped?.complete();
           inbox.close();
@@ -136,9 +147,14 @@ extension _Chain on CoreService {
     final (enc, sign) = spec.rendezvousSeeds;
     final rendezvous = await sharedDestinationAddress(enc, sign);
     await _chainForward();
+    final wallet = WalletKeys.of(await _secretKey(id));
     final joined = await _chainCmd('join', {
       'profile': id,
       'pubkey': p.pubkey,
+      // The private wallet: the worker scans with a and knows B; spending
+      // asks the core (signPoint).
+      'scanKey': wallet.scanKey.toRadixString(16),
+      'spend': toHex(wallet.address.spend.encoded),
       'address': address,
       'arcaAddress': arcaAddress(p.npub, address),
       'dir': _chainConfigFile(id).parent.path,
@@ -152,6 +168,8 @@ extension _Chain on CoreService {
       'files': await _chainFiles(id, spec),
     });
     if (joined['error'] != null) throw StateError(joined['error'] as String);
+    // Contacts pay by npub: the profile names its wallet address.
+    _background(_publishProfile(id));
     if (!light) {
       _chainAddresses.add(await net.addShared(enc, sign));
       _background(_chainWatchFiles(id, spec));
@@ -285,6 +303,35 @@ extension _Chain on CoreService {
 
   static bool get _isPhone => Platform.isAndroid || Platform.isIOS;
 
+  /// Publishes [id]'s profile (kind 0) with its name and wallet address, so
+  /// those who follow it can pay it by npub.
+  Future<void> _publishProfile(String id) async {
+    final p = _store.profiles.firstWhere((x) => x.id == id);
+    final address = WalletKeys.of(await _secretKey(id)).address.encoded;
+    await _publishLocal(id, Kind.profile, jsonEncode({'name': p.name, 'marca': address}));
+  }
+
+  /// The wallet address in [text], or the one the profile [text] names
+  /// (npub or Arca address) in its latest profile event this device holds.
+  Future<String?> _walletAddressOf(String text) async {
+    if (WalletAddress.parse(text) != null) return text.trim();
+    final key = _keyOf(text);
+    if (key == null) return null;
+    final events = await (await _eventStore(_activeId)).query([
+      NostrFilter(kinds: const [Kind.profile], authors: [key]),
+    ]);
+    events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    for (final e in events) {
+      try {
+        final marca = (jsonDecode(e.content) as Map)['marca'] as String?;
+        if (marca != null && WalletAddress.parse(marca) != null) return marca;
+      } on FormatException {
+        continue;
+      }
+    }
+    return null;
+  }
+
   /// The circle's reading rules for what this profile serves (whitepaper,
   /// section 9): members first and free, pass holders while their receipts
   /// keep up, others within the free allowance. Without a testnet, everyone
@@ -361,12 +408,27 @@ extension _Chain on CoreService {
         final config = await _chainConfig(id);
         return config == null ? {'error': 'This profile takes part in no test network.'} : {'spec': config['spec']};
       case 'chainSend':
-        final to = _keyOf(args['to'] as String? ?? '');
-        if (to == null) return {'error': 'Enter an npub or an Arca address.'};
+        // A private payment to a wallet address, or to someone followed
+        // whose profile names one.
+        final to = await _walletAddressOf(args['to'] as String? ?? '');
+        if (to == null) {
+          return {'error': 'Enter a wallet address (marca1...), or the npub of someone you follow who has one.'};
+        }
         final amount = grainsOf(args['amount'] as String? ?? '');
         if (amount == null) return {'error': 'Enter an amount in marcas, like 12.5.'};
         final r = await _chainCmd('send', {'profile': id, 'to': to, 'amount': amount});
         return r['error'] == null ? null : r;
+      case 'chainMove':
+        // Marcas between the public balance and the private side: toPrivate
+        // true moves them in.
+        final amount = grainsOf(args['amount'] as String? ?? '');
+        if (amount == null) return {'error': 'Enter an amount in marcas, like 12.5.'};
+        final r = await _chainCmd('move', {'profile': id, 'amount': args['toPrivate'] == false ? -amount : amount});
+        return r['error'] == null ? null : r;
+      case 'chainViewKey':
+        // For an auditor: sees what this wallet receives and spends, cannot
+        // spend.
+        return {'viewKey': WalletKeys.of(await _secretKey(id)).viewKey};
       case 'chainKeep':
         final r = await _chainCmd('keep', {'profile': id, 'partition': args['partition'], 'keep': args['keep']});
         return _chainSetting('keep', r['keep']);

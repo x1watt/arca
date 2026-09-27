@@ -96,10 +96,14 @@ Future<void> main(List<String> args) async {
   await waitFor(b, ready, 'B fetched the corpus by hash, rebuilt it, packed and declared');
   say('B joined in ${sw.elapsed.inSeconds} s');
 
-  final bNpub = (((await b.handle('state', {}))['profiles'] as List).single as Map)['npub'];
   sw = Stopwatch()..start();
-  await a.handle('chainSend', {'to': bNpub, 'amount': '5'});
-  await waitFor(b, (s) => chainOf(s)['balance'] == 5 * ChainParams.grainsPerMarca, 'B received 5 marcas');
+  // Privately: A moves marcas to its private side and pays B's wallet
+  // address; B finds the payment by scanning.
+  await a.handle('chainMove', {'amount': '20'});
+  await waitFor(a, (s) => chainOf(s)['private'] == 20 * ChainParams.grainsPerMarca, 'A moved 20 marcas to private');
+  final bAddress = chainOf(await b.handle('state', {}))['address'] as String;
+  await a.handle('chainSend', {'to': bAddress, 'amount': '5'});
+  await waitFor(b, (s) => chainOf(s)['private'] == 5 * ChainParams.grainsPerMarca, 'B received 5 marcas privately');
   say('payment took ${sw.elapsed.inSeconds} s');
   await waitFor(b, (s) => (chainOf(s)['syncScore'] as int? ?? 0) > 0, 'B proved its keeping', minutes: 4);
   final heights = [for (final c in cores) chainOf(await c.handle('state', {}))['height']];

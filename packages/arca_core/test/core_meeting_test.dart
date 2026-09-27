@@ -178,8 +178,10 @@ void main() {
     final sb = await waitFor(b, (s) => (chainOf(s)['height'] as int? ?? 0) >= honest, 'the newcomer follows');
     // On the founder's chain: it sees the founder's allocation spent on
     // nothing, and it can be paid by the founder.
-    expect((await a.handle('chainSend', {'to': ((sb['profiles'] as List).single as Map)['npub'], 'amount': '3'}))['error'], isNull);
-    await waitFor(b, (s) => chainOf(s)['balance'] == 3 * ChainParams.grainsPerMarca, 'the founder\'s payment arrives');
+    expect((await a.handle('chainMove', {'amount': '10'}))['error'], isNull);
+    await waitFor(a, (s) => chainOf(s)['private'] == 10 * ChainParams.grainsPerMarca, 'the founder\'s marcas are private');
+    expect((await a.handle('chainSend', {'to': chainOf(sb)['address'], 'amount': '3'}))['error'], isNull);
+    await waitFor(b, (s) => chainOf(s)['private'] == 3 * ChainParams.grainsPerMarca, 'the founder\'s payment arrives');
     await a.close();
     await b.close();
   }, timeout: const Timeout(Duration(minutes: 4)));

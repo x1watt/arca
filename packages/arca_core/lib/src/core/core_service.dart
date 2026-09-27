@@ -11,6 +11,8 @@ import 'dart:typed_data';
 import 'package:i2p/i2p.dart' show sharedDestinationAddress;
 
 import '../chain/testnet.dart';
+import '../chain/wallet_keys.dart';
+import '../crypto/point_schnorr.dart' show pointSign;
 import '../chain/wire.dart' show chainTag;
 import '../chain/worker.dart';
 import '../crypto/hex.dart';
@@ -890,7 +892,7 @@ class CoreService {
           final p = await _store.rename(args['id'] as String, args['name'] as String);
           // A name change is the user acting, so the profile is published as
           // a Nostr kind 0 event in its own relay (docs/architecture.md, 3.2).
-          await _publishLocal(p.id, Kind.profile, jsonEncode({'name': p.name}));
+          await _publishProfile(p.id);
         case 'stayOnline':
           await _store.setStayOnline(args['id'] as String, args['on'] as bool);
           await _syncOnline();

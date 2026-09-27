@@ -16,7 +16,9 @@ import '../crypto/schnorr.dart';
 import 'signer.dart';
 
 abstract final class TxType {
-  static const transfer = 'transfer';
+  /// Private marcas: a payment between wallets, or moving marcas between a
+  /// public balance and the private side (private_tx.dart).
+  static const private = 'private';
   static const createCircle = 'createCircle';
   static const anchor = 'anchor';
   static const declare = 'declare';

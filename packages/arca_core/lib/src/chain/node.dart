@@ -194,8 +194,28 @@ class ChainNode {
 
   Future<void> _submitting = Future.value();
 
+  /// Submits a transaction whose body needs its nonce (a signed private
+  /// transaction signs it inside): [build] gets the nonce.
+  Future<Tx> submitBuilt(String type, Future<Map<String, Object?>> Function(int nonce) build) {
+    final done = _submitting.then((_) async {
+      final nonce = nextNonce();
+      final tx = await Tx.signWith(signer, type, nonce, await build(nonce));
+      _addTx(tx, null);
+      return tx;
+    });
+    _submitting = done.then((_) {}, onError: (Object _) {});
+    return done;
+  }
+
+  /// Submits a transaction made elsewhere (a private payment, which names no
+  /// account).
+  void submitTx(Tx tx) => _addTx(tx, null);
+
   void _addTx(Tx tx, String? from) {
-    if (_mempool.containsKey(tx.id) || !tx.verify()) return;
+    // A private payment has no account signature; its own are checked when
+    // it is applied.
+    final anonymous = tx.type == TxType.private && tx.from.isEmpty;
+    if (_mempool.containsKey(tx.id) || (!anonymous && !tx.verify())) return;
     if (_stale(tx, state)) return;
     _mempool[tx.id] = tx;
     _broadcast({'t': 'tx', 'tx': tx.toJson()}, except: from);
@@ -204,6 +224,12 @@ class ChainNode {
   /// Whether [tx] can no longer go into a block on top of [s]: its nonce
   /// is used, or it is a holding proof for another day or already counted.
   static bool _stale(Tx tx, ChainState s) {
+    // A private transaction whose inputs are spent.
+    if (tx.type == TxType.private &&
+        (tx.body['inputs'] as List? ?? const []).any((i) => !s.outputs.containsKey('${(i as Map)['c']}'))) {
+      return true;
+    }
+    if (tx.type == TxType.private && tx.from.isEmpty) return false;
     if (TxType.numbered(tx.type)) return tx.nonce < (s.nonces[tx.from] ?? 0);
     final p = (tx.body['proof'] as Map?)?['partition'];
     return tx.body['day'] != s.day || s.provenOn[tx.from]?[p] == s.day;

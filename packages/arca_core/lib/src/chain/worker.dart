@@ -25,6 +25,7 @@ import 'dart:isolate';
 import 'dart:math' show max;
 import 'dart:typed_data';
 
+import '../crypto/curve.dart' show Point;
 import '../crypto/hex.dart';
 import '../transport/link.dart';
 import 'archive.dart';
@@ -40,8 +41,11 @@ import 'node.dart';
 import 'params.dart';
 import 'rewards.dart' show lapsed, standingOf, syncScoreOf;
 import 'testnet.dart';
+import 'private_tx.dart';
 import 'tx.dart';
 import 'verify.dart';
+import 'wallet.dart';
+import 'wallet_keys.dart';
 import 'wire.dart';
 
 /// Entry point of the chain isolate; [toCore] receives the worker's port
@@ -125,6 +129,9 @@ class _LightMember {
   int ticks = 0;
 
   String get pubkey => signer.publicKey;
+
+  /// The private wallet (wallet.dart).
+  late Wallet wallet;
 }
 
 class _Member {
@@ -165,6 +172,9 @@ class _Member {
   int ticks = 0;
 
   String get pubkey => node.key;
+
+  /// The private wallet (wallet.dart).
+  late Wallet wallet;
 }
 
 class ChainWorker {
@@ -213,7 +223,7 @@ class ChainWorker {
         final msg = _parts.add(inbound);
         if (msg == null) break;
         _onMeeting(inbound, msg);
-        if (msg['id'] != null && const {'log', 'checkpoint', 'snapshot', 'headers', 'proof'}.contains(msg['t'])) {
+        if (msg['id'] != null && const {'log', 'checkpoint', 'snapshot', 'headers', 'proof', 'outputs'}.contains(msg['t'])) {
           _waiting.remove('${msg['id']}')?.complete(msg);
         }
       case 'signed':
@@ -366,6 +376,81 @@ class ChainWorker {
     }
   }
 
+  // ---- The private wallet ----
+
+  /// The wallet of the profile joining with [a]: its scan key and spend
+  /// point come from the core, which keeps the spend key.
+  Future<Wallet> _wallet(Map<String, Object?> a, String dir) async {
+    final scan = BigInt.parse(a['scanKey'] as String, radix: 16);
+    final spend = Point.decode(fromHex(a['spend'] as String))!;
+    final w = Wallet(ViewKeys(scan, spend), WalletAddress(Point.g * scan, spend), File('$dir/wallet.json'));
+    await w.load();
+    return w;
+  }
+
+  /// Signs an input of [profile]'s wallet: the core adds the spend key to t.
+  InputSigner _inputSigner(String profile) => (input, message) {
+    final id = _nextSign++;
+    final c = Completer<Uint8List>();
+    _signing[id] = c;
+    _out(['signPoint', id, profile, input.t.toRadixString(16), Uint8List.fromList(message)]);
+    return c.future;
+  };
+
+  /// Pays [amount] grains to the wallet address [to] from [w]: coins, change
+  /// back to itself, and a transaction that names no account.
+  Future<({Tx? tx, String? error})> _pay(Wallet w, String profile, String to, int amount) async {
+    final address = WalletAddress.parse(to);
+    if (address == null) return (tx: null, error: 'That is not a wallet address (marca1...).');
+    if (amount <= 0) return (tx: null, error: 'Enter an amount above zero.');
+    final coins = w.pick(BigInt.from(amount));
+    if (coins == null) return (tx: null, error: 'The private balance is not enough for that.');
+    final change = coins.fold(BigInt.zero, (n, o) => n + o.value) - BigInt.from(amount);
+    final built = await buildPrivate(
+      signInput: _inputSigner(profile),
+      inputs: coins,
+      payments: [(address, BigInt.from(amount)), if (change > BigInt.zero) (w.address, change)],
+    );
+    w.markSpending(coins.map((c) => c.commitment));
+    return (tx: Tx(type: TxType.private, from: '', nonce: 0, body: built.body, sig: ''), error: null);
+  }
+
+  /// The body moving [amount] grains between [w]'s public balance and its
+  /// private side: in (+) or out (-). Null with an error when it cannot.
+  Future<({Future<Map<String, Object?>> Function(String from, int nonce)? build, String? error})> _move(
+    Wallet w,
+    String profile,
+    int amount,
+    int publicBalance,
+  ) async {
+    if (amount == 0) return (build: null, error: 'Enter an amount above zero.');
+    if (amount > 0 && publicBalance < amount) return (build: null, error: 'The public balance is not enough for that.');
+    List<Owned> coins = const [];
+    var change = BigInt.zero;
+    if (amount < 0) {
+      final picked = w.pick(BigInt.from(-amount));
+      if (picked == null) return (build: null, error: 'The private balance is not enough for that.');
+      coins = picked;
+      change = coins.fold(BigInt.zero, (n, o) => n + o.value) + BigInt.from(amount);
+      w.markSpending(coins.map((c) => c.commitment));
+    }
+    final payments = [
+      if (amount > 0) (w.address, BigInt.from(amount)),
+      if (change > BigInt.zero) (w.address, change),
+    ];
+    return (
+      build: (String from, int nonce) async => (await buildPrivate(
+        signInput: _inputSigner(profile),
+        inputs: coins,
+        payments: payments,
+        pub: amount,
+        from: from,
+        nonce: nonce,
+      )).body,
+      error: null,
+    );
+  }
+
   Future<Map<String, Object?>> _command(String name, Map<String, Object?> a) async {
     final light = _lights[a['profile']];
     if (light != null && name != 'join') return _lightCommand(light, name, a);
@@ -440,10 +525,16 @@ class ChainWorker {
         return {};
       case 'send':
         final m = _members[a['profile']]!;
-        final amount = a['amount'] as int;
-        if (amount <= 0) return {'error': 'Enter an amount above zero.'};
-        if (m.node.state.balanceOf(m.pubkey) < amount) return {'error': 'The balance is not enough for that.'};
-        m.node.submit(TxType.transfer, {'to': a['to'], 'amount': amount});
+        final r = await _pay(m.wallet, m.profileId, a['to'] as String? ?? '', a['amount'] as int);
+        if (r.error != null) return {'error': r.error};
+        m.node.submitTx(r.tx!);
+        return {};
+      case 'move':
+        // Between the public balance and the private side.
+        final m = _members[a['profile']]!;
+        final r = await _move(m.wallet, m.profileId, a['amount'] as int, m.node.state.balanceOf(m.pubkey));
+        if (r.error != null) return {'error': r.error};
+        await m.node.submitBuilt(TxType.private, (nonce) => r.build!(m.pubkey, nonce));
         return {};
       case 'payout':
         final m = _members[a['profile']]!;
@@ -627,6 +718,7 @@ class ChainWorker {
       peers: peers,
     );
     final m = _Member(profile, signer, address, a['arcaAddress'] as String, dir, spec, node)
+      ..wallet = await _wallet(a, dir)
       ..keep = {...(a['keep'] as List? ?? const []).cast<int>()}
       ..files = (a['files'] as Map? ?? const {}).cast<String, String>()
       ..rendezvous = rendezvous
@@ -659,6 +751,17 @@ class ChainWorker {
     }
     Future<Map<String, Object?>?> answer(String from, Map msg) async {
       switch (msg['t']) {
+        case 'getOutputs':
+          // Unspent outputs, for light wallets to scan (they keep only what
+          // a proven read confirms).
+          final raw = m.node.state.outputs.raw;
+          final keys = raw.keys.toList()..sort();
+          final from = msg['from'] as int? ?? 0;
+          return {
+            't': 'outputs',
+            'outputs': {for (final k in keys.skip(from).take(100)) k: raw[k]},
+            'next': from + 100 < keys.length ? from + 100 : null,
+          };
         case 'getHeaders':
           final n = (msg['n'] as int? ?? 40).clamp(1, 40);
           return {
@@ -728,7 +831,8 @@ class ChainWorker {
       askCheckpoint: false,
     );
     if (start != null) light.trust(start, work!);
-    final m = _LightMember(profile, _RemoteSigner(this, profile, a['pubkey'] as String), address, rendezvous, spec, light);
+    final m = _LightMember(profile, _RemoteSigner(this, profile, a['pubkey'] as String), address, rendezvous, spec, light)
+      ..wallet = await _wallet(a, dir);
     _lights[profile] = m;
     light.start();
     m.timer = Timer.periodic(const Duration(seconds: 1), (_) => _lightTick(m));
@@ -756,6 +860,7 @@ class ChainWorker {
       m.reading = true;
       try {
         await _lightRead(m, head);
+        await _lightWallet(m, head);
         m.readAt = head;
         m.readTick = m.ticks;
       } catch (_) {
@@ -774,6 +879,27 @@ class ChainWorker {
 
   /// Blocks between a light device's reads when nothing of its own waits.
   static const _lightReadBlocks = 6;
+
+  /// A light wallet scans the unspent outputs a full node lists, and keeps
+  /// only those a proven read at [at] confirms: a node can hide an output
+  /// from it, not invent one.
+  Future<void> _lightWallet(_LightMember m, String at) async {
+    final peer = m.light.peers.firstOrNull;
+    if (peer == null) return;
+    final all = <String, String>{};
+    int? next = 0;
+    while (next != null) {
+      final r = await _ask(m.address, peer, {'t': 'getOutputs', 'from': next}, wait: const Duration(seconds: 45));
+      all.addAll((r['outputs'] as Map).cast<String, String>());
+      next = r['next'] as int?;
+    }
+    m.wallet.update(all);
+    if (m.wallet.owned.isNotEmpty) {
+      final proven = await m.light.read('outputs', m.wallet.owned.keys.toList(), at: at);
+      m.wallet.owned.removeWhere((k, _) => proven[k]?.value == null);
+    }
+    await m.wallet.save();
+  }
 
   Future<void> _lightRead(_LightMember m, String at) async {
     final me = m.pubkey;
@@ -812,6 +938,8 @@ class ChainWorker {
           h == null || DateTime.now().millisecondsSinceEpoch ~/ params.tickMillis - h.tick > params.blockTicks * 10,
       'peers': m.light.peers.length,
       'balance': m.balance,
+      'private': m.wallet.balance.toInt(),
+      'address': m.wallet.address.encoded,
       'pending': m.pending.length,
       'mining': false,
       'paused': null,
@@ -852,13 +980,17 @@ class ChainWorker {
   Future<Map<String, Object?>> _lightCommand(_LightMember m, String name, Map<String, Object?> a) async {
     switch (name) {
       case 'send':
-        final amount = a['amount'] as int;
-        if (amount <= 0) return {'error': 'Enter an amount above zero.'};
-        final spent = m.pending
-            .where((t) => t.type == TxType.transfer)
-            .fold<int>(0, (n, t) => n + (t.body['amount'] as int));
-        if (m.balance - spent < amount) return {'error': 'The balance is not enough for that.'};
-        await _lightSubmit(m, TxType.transfer, {'to': a['to'], 'amount': amount});
+        final r = await _pay(m.wallet, m.profileId, a['to'] as String? ?? '', a['amount'] as int);
+        if (r.error != null) return {'error': r.error};
+        m.light.broadcast({'t': 'tx', 'tx': r.tx!.toJson()});
+        return {};
+      case 'move':
+        final r = await _move(m.wallet, m.profileId, a['amount'] as int, m.balance);
+        if (r.error != null) return {'error': r.error};
+        final nonce = m.nonce + m.pending.where((t) => TxType.numbered(t.type)).length;
+        final tx = await Tx.signWith(m.signer, TxType.private, nonce, await r.build!(m.pubkey, nonce));
+        m.pending.add(tx);
+        m.light.broadcast({'t': 'tx', 'tx': tx.toJson()});
         return {};
       case 'buyPass':
         final c = m.circle;
@@ -1044,6 +1176,7 @@ class ChainWorker {
     // The newest headers into the archive, a few below its top again in
     // case the chain turned.
     if (m.ticks % 5 == 0) _archive(m);
+    if (m.ticks % 2 == 0 && m.wallet.update(m.node.state.outputs.raw)) unawaited(m.wallet.save());
     // Keeps meeting other full nodes: often while it knows none, then now
     // and then, so the network stays joined up as nodes come and go.
     if (m.ticks % (_fullPeers(m).isEmpty ? 30 : 300) == 1) _hello(m.address, m.rendezvous, full: true);
@@ -1087,6 +1220,8 @@ class ChainWorker {
       'behind': m.node.currentTick - s.tick > params.blockTicks * 10,
       'peers': m.node.peerCount,
       'balance': s.balanceOf(m.pubkey),
+      'private': m.wallet.balance.toInt(),
+      'address': m.wallet.address.encoded,
       'pending': m.node.waiting.where((t) => t.from == m.pubkey).length,
       'mining': m.miningWanted,
       'paused': _paused(m),

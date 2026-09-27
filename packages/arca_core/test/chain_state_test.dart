@@ -12,18 +12,18 @@ void main() {
   String pk(List<int> k) => toHex(publicKeyOf(k));
   ChainState genesis() => ChainState.genesis(p, allocations: {pk(alice): 10000 * m});
 
-  test('transfers move marcas; nonces stop replays; overspends and forgeries fail', () async {
+  test('public balances pay for protocol actions; nonces stop replays; overspends and forgeries fail', () async {
     final s = genesis();
-    final t = Tx.sign(alice, TxType.transfer, 0, {'to': pk(bob), 'amount': 250 * m});
+    final t = Tx.sign(alice, TxType.burn, 0, {'amount': 250 * m});
     await s.apply(t);
-    expect(s.balanceOf(pk(bob)), 250 * m);
+    expect(s.burned, 250 * m);
     expect(s.balanceOf(pk(alice)), 9750 * m);
     await expectLater(() => s.apply(t), throwsA(isA<ChainError>()), reason: 'replayed');
     await expectLater(
-      () => s.apply(Tx.sign(bob, TxType.transfer, 0, {'to': pk(alice), 'amount': 251 * m})),
+      () => s.apply(Tx.sign(bob, TxType.burn, 0, {'amount': 251 * m})),
       throwsA(predicate((e) => '$e'.contains('balance'))),
     );
-    final forged = Tx(type: t.type, from: pk(alice), nonce: 1, body: {'to': pk(bob), 'amount': 1}, sig: t.sig);
+    final forged = Tx(type: t.type, from: pk(alice), nonce: 1, body: {'amount': 1}, sig: t.sig);
     await expectLater(() => s.apply(forged), throwsA(predicate((e) => '$e'.contains('signature'))));
   });
 
@@ -76,21 +76,21 @@ void main() {
     var a = genesis(), b = genesis();
     for (var h = 1; h <= 3; h++) {
       final block = await Block.produce(a, producer, [
-        Tx.sign(alice, TxType.transfer, h - 1, {'to': pk(bob), 'amount': h * m}),
+        Tx.sign(alice, TxType.burn, h - 1, {'amount': h * m}),
       ], tick: h * 10);
       a = await block.applyTo(a);
       b = await Block.fromJson(block.toJson()).applyTo(b);
       expect(b.rootHex, a.rootHex);
       expect(b.head, a.head);
     }
-    expect(a.balanceOf(pk(bob)), 6 * m);
+    expect(a.burned, 6 * m);
     expect(a.height, 3);
   });
 
   test('tampered blocks are rejected', () async {
     final s = genesis();
     final block = await Block.produce(s, producer, [
-      Tx.sign(alice, TxType.transfer, 0, {'to': pk(bob), 'amount': m}),
+      Tx.sign(alice, TxType.burn, 0, {'amount': m}),
     ], tick: 5);
     Block change(Map<String, Object?> Function(Map<String, Object?>) f) => Block.fromJson(f(block.toJson()));
     // A different state than the one the transactions produce.
@@ -106,7 +106,7 @@ void main() {
           ...j,
           'txs': [
             ...(j['txs'] as List),
-            Tx.sign(alice, TxType.transfer, 1, {'to': pk(bob), 'amount': m}).toJson(),
+            Tx.sign(alice, TxType.burn, 1, {'amount': m}).toJson(),
           ],
         },
       ).applyTo(s),

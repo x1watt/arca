@@ -42,7 +42,6 @@ Future<void> until(bool Function() ok, String what, {Duration limit = const Dura
 void main() {
   test('a light client follows full nodes, reads proven state, drops a block shown wrong, takes a snapshot', () async {
     final keyA = generateSecretKey(), keyB = generateSecretKey(), attacker = generateSecretKey();
-    final friend = generateSecretKey();
     final genesis = ChainState.genesis(
       p,
       allocations: {pk(keyA): 1000 * m, pk(attacker): 1000 * m},
@@ -71,25 +70,25 @@ void main() {
     b.start();
     light.start();
 
-    // Some payments make blocks.
+    // Some burns make blocks.
     for (var i = 0; i < 5; i++) {
-      a.submit(TxType.transfer, {'to': pk(friend), 'amount': 10 * m});
+      a.submit(TxType.burn, {'amount': 10 * m});
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    await until(() => a.state.balanceOf(pk(friend)) == 50 * m, 'the payments are in blocks');
+    await until(() => a.state.burned == 50 * m, 'the burns are in blocks');
     await until(() => light.headHash == a.headHash && light.headHash == b.headHash, 'the phone follows the head');
     expect(light.height, a.state.height);
 
-    // The phone reads the friend's balance, proven against its header.
-    final read = await light.read('balances', [pk(friend), pk(keyB)]);
-    expect(read[pk(friend)]!.value, '${50 * m}');
+    // The phone reads a balance, proven against its header.
+    final read = await light.read('balances', [pk(keyA), pk(keyB)]);
+    expect(read[pk(keyA)]!.value, '${950 * m}');
     expect(read[pk(keyB)]!.value, isNull, reason: 'absent, and proven absent');
 
-    // An attacker makes a block that pays itself: the transfer is real, the
+    // An attacker makes a block that pays itself: the burn is real, the
     // result it signs is not.
     final parent = a.state;
     final honest = await Block.produce(parent, attacker, [
-      Tx.sign(attacker, TxType.transfer, 0, {'to': pk(friend), 'amount': 1 * m}),
+      Tx.sign(attacker, TxType.burn, 0, {'amount': 1 * m}),
     ], tick: a.currentTick + 1);
     final lie = parent.copy()..head = '';
     lie.balances[pk(attacker)] = 1000000 * m;
@@ -122,7 +121,7 @@ void main() {
     final at = a.headHash;
     await until(() => light.header(at) != null, 'the phone knows the head');
     final snap = await light.snapshot(at: at);
-    expect(snap.balanceOf(pk(friend)), a.state.balanceOf(pk(friend)));
+    expect(snap.balanceOf(pk(keyA)), a.state.balanceOf(pk(keyA)));
     expect(snap.height, a.state.height);
 
     // Past the fraud window, headers are final.

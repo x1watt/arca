@@ -7,6 +7,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../crypto/curve.dart' show Point;
 import '../crypto/hex.dart';
 import 'circle_log.dart' show governanceMessage, PayoutTable;
 import '../crypto/schnorr.dart';
@@ -14,6 +15,7 @@ import 'merkle.dart';
 import 'mining.dart';
 import 'params.dart';
 import 'passes.dart';
+import 'private_tx.dart' show applyPrivate;
 import 'rewards.dart';
 import 'smt.dart';
 import 'state_map.dart';
@@ -141,7 +143,18 @@ class ChainState {
   ChainState(this.params);
 
   final ChainParams params;
+  /// Public balances: what the protocol pays or charges keys that act in
+  /// public anyway (claims from a circle's pool, servers' pass shares, burns,
+  /// circle fees, passes). Payments between people are private (outputs).
   final balances = StateMap<int>('balances');
+
+  /// Unspent private outputs by commitment (private_tx.dart).
+  final outputs = StateMap<String>('outputs');
+
+  /// The sum of every kernel excess, and the marcas held privately: with
+  /// them anyone checks the private side adds up (auditSupply).
+  Point excessSum = Point.infinity;
+  int privateSupply = 0;
   final nonces = StateMap<int>('nonces');
   final circles = StateMap<CircleState>('circles');
 
@@ -238,6 +251,7 @@ class ChainState {
   ChainState copy() {
     final s = ChainState(params)..meta = meta;
     balances.copyInto(s.balances, (v) => v);
+    outputs.copyInto(s.outputs, (v) => v);
     nonces.copyInto(s.nonces, (v) => v);
     circles.copyInto(s.circles, (v) => v.copy());
     collections.copyInto(s.collections, (v) => v); // never changed in place
@@ -258,6 +272,7 @@ class ChainState {
   static const namespaces = [
     'meta',
     'balances',
+    'outputs',
     'nonces',
     'circles',
     'collections',
@@ -287,6 +302,8 @@ class ChainState {
     'keepers': keepers,
     'settleFrom': settleFrom,
     'passFrom': passFrom,
+    'excessSum': toHex(excessSum.encoded),
+    'privateSupply': privateSupply,
   };
 
   set meta(Map<String, Object?> m) {
@@ -304,6 +321,8 @@ class ChainState {
     keepers = m['keepers'] as int;
     settleFrom = m['settleFrom'] as int? ?? -1;
     passFrom = m['passFrom'] as int? ?? -1;
+    excessSum = Point.decode(fromHex(m['excessSum'] as String? ?? '00' * 33)) ?? Point.infinity;
+    privateSupply = m['privateSupply'] as int? ?? 0;
   }
 
   static String _intMap(Map<int, Object?> m) => canonicalJson({for (final e in m.entries) '${e.key}': e.value});
@@ -314,6 +333,7 @@ class ChainState {
   /// Every map with its encoder and decoder, by namespace.
   List<(StateMap, String Function(Object?), Object Function(String))> get _maps => [
     (balances, (v) => '$v', int.parse),
+    (outputs, (v) => v as String, (v) => v),
     (nonces, (v) => '$v', int.parse),
     (circles, (v) => canonicalJson((v as CircleState).toJson()), (v) => CircleState.fromJson(jsonDecode(v) as Map)),
     (
@@ -409,19 +429,18 @@ class ChainState {
   /// Applies [tx] or throws [ChainError] and leaves the state as it was
   /// only if the caller works on a copy (blocks do).
   Future<void> apply(Tx tx) async {
-    if (!tx.verify()) throw const ChainError('bad signature');
-    final numbered = TxType.numbered(tx.type);
+    // A private payment names no account: its kernel and inputs carry the
+    // signatures (private_tx.dart).
+    final anonymous = tx.type == TxType.private && tx.from.isEmpty;
+    if (!anonymous && !tx.verify()) throw const ChainError('bad signature');
+    final numbered = TxType.numbered(tx.type) && !anonymous;
     final expected = numbered ? nonces[tx.from] ?? 0 : 0;
     if (tx.nonce != expected) throw ChainError('nonce ${tx.nonce}, expected $expected');
     final b = tx.body;
     switch (tx.type) {
-      case TxType.transfer:
-        final to = b['to'] as String? ?? '';
-        final amount = b['amount'] as int? ?? 0;
-        if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(to)) throw const ChainError('bad recipient');
-        if (amount <= 0) throw const ChainError('amount must be positive');
-        _spend(tx.from, amount);
-        balances[to] = balanceOf(to) + amount;
+      case TxType.private:
+        if (anonymous && tx.nonce != 0) throw const ChainError('a private payment has no nonce');
+        applyPrivate(this, tx);
       case TxType.createCircle:
         final id = b['circle'] as String? ?? '';
         if (!RegExp(r'^[a-z0-9][a-z0-9-]{2,62}$').hasMatch(id)) throw const ChainError('bad circle id');

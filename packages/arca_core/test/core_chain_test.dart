@@ -100,14 +100,25 @@ void main() {
     var sb = await waitFor(b, ready, what: 'the joiner copies, packs and declares', seconds: 90);
     expect(chainOf(sb)['founder'], isFalse);
 
-    // A payment.
-    r = await a.handle('chainSend', {'to': (await me(b))['npub'], 'amount': '25'});
-    expect(r['error'], isNull);
-    sb = await waitFor(b, (s) => chainOf(s)['balance'] == 25 * m, what: 'the payment arrives');
+    // Private payments: the founder moves marcas from its public balance to
+    // its private side, then pays the joiner's wallet address; the joiner
+    // finds the payment by scanning, and the change comes back.
+    r = await a.handle('chainMove', {'amount': '100'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    sa = await waitFor(a, (s) => chainOf(s)['private'] == 100 * m, what: 'the marcas are private');
+    expect(chainOf(sa)['balance'], 9900 * m);
+    r = await a.handle('chainSend', {'to': chainOf(sb)['address'], 'amount': '25'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    sb = await waitFor(b, (s) => chainOf(s)['private'] == 25 * m, what: 'the payment arrives and the joiner finds it');
+    sa = await waitFor(a, (s) => chainOf(s)['private'] == 75 * m, what: 'the change comes back');
     r = await a.handle('chainSend', {'to': 'nobody', 'amount': '1'});
-    expect(r['error'], contains('npub'));
-    r = await b.handle('chainSend', {'to': (await me(a))['npub'], 'amount': '1000'});
+    expect(r['error'], contains('wallet address'));
+    r = await b.handle('chainSend', {'to': chainOf(sa)['address'], 'amount': '1000'});
     expect(r['error'], contains('not enough'));
+    // And back to the public balance.
+    r = await b.handle('chainMove', {'amount': '5', 'toPrivate': false});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    sb = await waitFor(b, (s) => chainOf(s)['private'] == 20 * m && chainOf(s)['balance'] == 5 * m, what: 'moved out');
 
     // Days pass; both prove their keeping; the pool fills.
     sa = await waitFor(
@@ -149,7 +160,7 @@ void main() {
     expect(r['error'], isNull, reason: '${r['error']}');
     await waitFor(
       a,
-      (s) => ((circlesOf(s).firstWhere((c) => c['id'] == 'radio')['pool']) as int) > 0,
+      (s) => ((circlesOf(s).where((c) => c['id'] == 'radio').firstOrNull?['pool'] as int?) ?? 0) > 0,
       what: 'the new circle earns from the joiner\'s keeping',
       seconds: 60,
     );
@@ -195,16 +206,12 @@ void main() {
       (s) => chainOf(s)['light'] == true && (chainOf(s)['height'] as int) > 0,
       what: 'the phone follows',
     );
-    r = await a.handle('chainSend', {'to': (await me(c))['npub'], 'amount': '3'});
-    expect(r['error'], isNull);
-    sc = await waitFor(c, (s) => chainOf(s)['balance'] == 3 * m, what: 'the phone reads its balance with a proof');
-    r = await c.handle('chainSend', {'to': (await me(a))['npub'], 'amount': '1'});
+    r = await a.handle('chainSend', {'to': chainOf(sc)['address'], 'amount': '3'});
+    expect(r['error'], isNull, reason: '${r['error']}');
+    sc = await waitFor(c, (s) => chainOf(s)['private'] == 3 * m, what: 'the phone finds its payment, proven');
+    r = await c.handle('chainSend', {'to': chainOf(sa)['address'], 'amount': '1'});
     expect(r['error'], isNull, reason: 'a light device sends too');
-    await waitFor(
-      c,
-      (s) => chainOf(s)['balance'] == 2 * m && chainOf(s)['pending'] == 0,
-      what: 'the phone\'s payment went in',
-    );
+    await waitFor(c, (s) => chainOf(s)['private'] == 2 * m, what: 'the phone\'s payment went in');
     expect((chainOf(sc)['partitions'] as List), isEmpty);
     await c.close();
 
