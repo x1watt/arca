@@ -22,10 +22,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:math' show max;
 import 'dart:typed_data';
 
 import '../crypto/hex.dart';
 import '../transport/link.dart';
+import 'archive.dart';
 import 'circle_log.dart';
 import 'corpus.dart';
 import 'fraud.dart' show Header;
@@ -39,6 +41,7 @@ import 'params.dart';
 import 'rewards.dart' show lapsed, standingOf, syncScoreOf;
 import 'testnet.dart';
 import 'tx.dart';
+import 'verify.dart';
 import 'wire.dart';
 
 /// Entry point of the chain isolate; [toCore] receives the worker's port
@@ -144,6 +147,9 @@ class _Member {
   /// The network's meeting point, which this member answers for too
   /// (TestnetSpec.rendezvousSeeds).
   String rendezvous = '';
+
+  /// This member's chain's headers, served to newcomers that check it.
+  late HeaderArchive archive;
   Map<String, String> files = {};
   Corpus? corpus;
   String? corpusError;
@@ -207,7 +213,7 @@ class ChainWorker {
         final msg = _parts.add(inbound);
         if (msg == null) break;
         _onMeeting(inbound, msg);
-        if (msg['id'] != null && const {'peers', 'log', 'checkpoint', 'snapshot'}.contains(msg['t'])) {
+        if (msg['id'] != null && const {'log', 'checkpoint', 'snapshot', 'headers', 'proof'}.contains(msg['t'])) {
           _waiting.remove('${msg['id']}')?.complete(msg);
         }
       case 'signed':
@@ -239,6 +245,99 @@ class ChainWorker {
     }
   }
 
+  final _meetings = <String, void Function(List<String>)>{};
+
+  /// Says hello at the meeting point and gathers every answer: after the
+  /// first, it listens a while longer, since every node answering there
+  /// gets the hello and one honest answer is enough (the heaviest chain
+  /// that holds up is followed, however many nodes vouch for others).
+  Future<List<String>> _meet(String from, String rendezvous, {required bool full, required ChainParams params}) async {
+    final id = 'w${_nextId++}';
+    final found = <String>{};
+    final first = Completer<void>();
+    _meetings[id] = (peers) {
+      found.addAll(peers);
+      if (!first.isCompleted) first.complete();
+    };
+    void send() => _sendMsg(from, rendezvous, {'t': 'hello', 'full': full, 'id': id});
+    send();
+    final again = Timer.periodic(const Duration(seconds: 10), (_) => send());
+    try {
+      // A meeting point whose lease set was just published can take a few
+      // minutes to be found.
+      await first.future.timeout(const Duration(minutes: 4));
+      // Two blocks' time: 20 s on the test network.
+      await Future<void>.delayed(Duration(milliseconds: (params.blockTicks * params.tickMillis * 2).clamp(500, 20000)));
+    } on TimeoutException {
+      throw TimeoutException('No node of the test network answered. Try again in a minute.');
+    } finally {
+      again.cancel();
+      _meetings.remove(id);
+    }
+    return (found..remove(from)).toList();
+  }
+
+  /// Where this device's check of a chain starts: a checkpoint built into
+  /// this release, or genesis.
+  static Anchor _anchorFor(TestnetSpec spec) => TestnetSpec.builtInCheckpoint ?? Anchor.genesis(spec.genesisTick);
+
+  /// Checks the chains of [peers] (chain/verify.dart) and returns the
+  /// heaviest that holds up, with the headers fetched along the way.
+  Future<({String peer, List<Header> chain, Map<String, Header> full, BigInt work})> _choose(
+    TestnetSpec spec,
+    String from,
+    List<String> peers,
+    Anchor anchor,
+  ) async {
+    final checker = ChainChecker(params: spec.params, corpusRoot: spec.corpusRoot, partitionSizes: spec.partitionSizes);
+    ({String peer, List<Header> chain, Map<String, Header> full, BigInt work})? best;
+    final why = <String>[];
+    // Each peer's chain at once: a peer that is gone costs one wait, not
+    // one each.
+    Future<void> tryPeer(String peer) async {
+      try {
+        const page = 40;
+        final chain = <Header>[];
+        for (var at = anchor.height + 1; ; at += page) {
+          final r = await _ask(from, peer, {'t': 'getHeaders', 'from': at, 'n': page}, wait: const Duration(seconds: 45));
+          final hs = [for (final h in r['headers'] as List) Header.fromJson(h as Map)];
+          if (hs.isNotEmpty && hs.first.height != at) throw StateError('it cannot show its chain from our anchor');
+          chain.addAll(hs);
+          if (hs.length < page) break;
+        }
+        final full = <String, Header>{};
+        Future<Header?> fetch(Header s) async {
+          for (final p in [peer, ...peers.where((x) => x != peer)].take(3)) {
+            try {
+              final r = await _ask(from, p, {'t': 'getProof', 'hash': s.hash}, wait: const Duration(seconds: 45));
+              if (r['header'] case final Map h) return full[s.hash] = Header.fromJson(h);
+            } on Object {
+              // Ask the next.
+            }
+          }
+          return null;
+        }
+
+        final r = await checker.check(anchor, chain, fetch);
+        if (!r.ok) {
+          why.add(r.error!);
+          return;
+        }
+        final b = best;
+        if (b == null || r.work! > b.work) best = (peer: peer, chain: chain, full: full, work: r.work!);
+      } on Object catch (e) {
+        why.add('$e');
+      }
+    }
+
+    await Future.wait([for (final p in peers.take(6)) tryPeer(p)]);
+    final chosen = best;
+    if (chosen == null) {
+      throw StateError('No chain shown by the nodes met holds up (${why.take(3).join('; ')}).');
+    }
+    return chosen;
+  }
+
   /// A hello to the meeting point: whichever full node gets it answers
   /// with its own address and the full nodes it knows.
   void _hello(String from, String rendezvous, {required bool full}) =>
@@ -257,6 +356,7 @@ class ChainWorker {
         });
       case 'peers':
         final found = [for (final p in msg['peers'] as List? ?? const []) '$p'];
+        if (msg['id'] != null) _meetings['${msg['id']}']?.call(found);
         for (final x in _members.values.where((x) => x.address == m.to)) {
           x.node.peers.addAll(found.where((p) => p != x.address));
         }
@@ -287,6 +387,10 @@ class ChainWorker {
           params: params,
         );
         return {'spec': spec.json};
+      case 'checkpoint':
+        // The head as a checkpoint for a release (tool/seed_node.dart).
+        final m = _members[a['profile']];
+        return m == null ? {'error': 'This profile keeps no files here.'} : {'anchor': m.node.headAnchor.toJson()};
       case 'peers':
         // The full nodes a member found: where its copy of the corpus comes
         // from.
@@ -471,37 +575,48 @@ class ChainWorker {
       }
     }
     // A newcomer starts from a full node's recent state, not from genesis:
-    // nodes keep no blocks older than their own snapshot. It finds them at
-    // the network's meeting point. Only the founder starts from genesis.
+    // nodes keep no blocks older than their own snapshot. It meets them at
+    // the network's meeting point, checks the chain each of them shows from
+    // an anchor it trusts (chain/verify.dart), and takes the state at the
+    // tip of the heaviest that holds up, checked against that tip. Only the
+    // founder starts from genesis.
     final rendezvous = a['rendezvous'] as String;
+    final archive = HeaderArchive(File('$dir/headers.json'), _anchorFor(spec));
+    await archive.load();
     if (node == null && spec.founder != a['pubkey']) {
-      // A meeting point whose lease set was just published can take a few
-      // minutes to be found.
-      final reply = await _ask(address, rendezvous, {'t': 'hello', 'full': true}, wait: const Duration(minutes: 4));
-      final found = [for (final p in reply['peers'] as List? ?? const []) '$p'].where((p) => p != address).toList();
-      peers.addAll(found.where((p) => !peers.contains(p)));
-      Object? lastError;
-      for (final p in found) {
-        try {
-          final boot = await _bootstrap(spec, address, p);
-          if (boot != null) {
-            node = ChainNode.fromSnapshot(
-              boot,
-              params: spec.params,
-              genesisRoot: genesis.rootHex,
-              address: address,
-              link: _link,
-              signer: signer,
-              peers: peers,
-            );
+      final met = await _meet(address, rendezvous, full: true, params: spec.params);
+      peers.addAll(met.where((p) => !peers.contains(p)));
+      final anchor = _anchorFor(spec);
+      final best = await _choose(spec, address, met, anchor);
+      archive
+        ..anchor = anchor
+        ..put([for (final h in best.chain) best.full[h.hash] ?? h]);
+      if (best.chain.isNotEmpty) {
+        final tip = best.full[best.chain.last.hash];
+        if (tip == null) throw StateError('The chain\'s newest header came without its proof.');
+        // The state at that tip, from the node that showed the chain or
+        // another that holds it; checked against the tip's state root.
+        Map<String, Object?>? boot;
+        Object? failed;
+        for (final p in [best.peer, ...met.where((x) => x != best.peer)]) {
+          try {
+            boot = await _bootstrap(spec, address, p, at: tip, work: best.work);
+            break;
+          } on Object catch (e) {
+            failed = e;
           }
-          lastError = null;
-          break;
-        } catch (e) {
-          lastError = e;
         }
+        if (boot == null) throw failed ?? StateError('No node sent the state at the chain\'s tip.');
+        node = ChainNode.fromSnapshot(
+          boot,
+          params: spec.params,
+          genesisRoot: genesis.rootHex,
+          address: address,
+          link: _link,
+          signer: signer,
+          peers: peers,
+        );
       }
-      if (lastError != null) throw lastError;
     }
     node ??= ChainNode(
       params: spec.params,
@@ -514,7 +629,8 @@ class ChainWorker {
     final m = _Member(profile, signer, address, a['arcaAddress'] as String, dir, spec, node)
       ..keep = {...(a['keep'] as List? ?? const []).cast<int>()}
       ..files = (a['files'] as Map? ?? const {}).cast<String, String>()
-      ..rendezvous = rendezvous;
+      ..rendezvous = rendezvous
+      ..archive = archive;
     m.miningWanted = a['mining'] as bool? ?? true;
     _applyPower(m);
     m.keepCircle = a['keepCircle'] as String? ?? spec.circleId;
@@ -543,6 +659,15 @@ class ChainWorker {
     }
     Future<Map<String, Object?>?> answer(String from, Map msg) async {
       switch (msg['t']) {
+        case 'getHeaders':
+          final n = (msg['n'] as int? ?? 40).clamp(1, 40);
+          return {
+            't': 'headers',
+            'headers': [for (final h in m.archive.summaries(msg['from'] as int? ?? 1, n)) h.toJson()],
+          };
+        case 'getProof':
+          final h = m.archive.byHash('${msg['hash']}');
+          return {'t': 'proof', 'header': h == null || h.isSummary ? null : h.toJson()};
         case 'getLog' when m.logs.containsKey(msg['circle'] ?? spec.circleId):
           return {
             't': 'log',
@@ -563,26 +688,47 @@ class ChainWorker {
 
   // ---- Light mode ----
 
-  void _joinLight(Map<String, Object?> a) {
+  /// A light device checks the chain it is shown (chain/verify.dart) from
+  /// an anchor it trusts: the last tip it checked (kept in light.json), a
+  /// checkpoint built into the release, or genesis. It then follows from
+  /// that chain's tip and never takes a checkpoint on trust.
+  Future<void> _joinLight(Map<String, Object?> a) async {
     final profile = a['profile'] as String;
     final spec = TestnetSpec((a['spec'] as Map).cast<String, Object?>());
+    final address = a['address'] as String, rendezvous = a['rendezvous'] as String;
+    final dir = a['dir'] as String;
+    await Directory(dir).create(recursive: true);
+    final saved = File('$dir/light.json');
+    var anchor = _anchorFor(spec);
+    Header? start;
+    BigInt? work;
+    try {
+      final j = jsonDecode(await saved.readAsString()) as Map;
+      start = Header.fromJson(j['header'] as Map);
+      work = BigInt.parse(j['work'] as String);
+      anchor = Anchor(hash: start.hash, height: start.height, tick: start.tick, work: work);
+    } on Object {
+      // Nothing checked yet on this device.
+    }
+    final met = await _meet(address, rendezvous, full: false, params: spec.params);
+    final best = await _choose(spec, address, met, anchor);
+    if (best.chain.isNotEmpty) {
+      start = best.full[best.chain.last.hash];
+      if (start == null) throw StateError('The chain\'s newest header came without its proof.');
+      work = best.work;
+      await saved.writeAsString(jsonEncode({'header': start.toJson(), 'work': '$work'}));
+    }
     final light = LightClient(
       params: spec.params,
       genesisRoot: spec.genesis().rootHex,
       genesisTick: spec.genesisTick,
-      address: a['address'] as String,
+      address: address,
       link: _link,
-      // The full nodes it followed before; more come from the meeting point.
-      peers: (a['peers'] as List? ?? const []).cast<String>(),
+      peers: met,
+      askCheckpoint: false,
     );
-    final m = _LightMember(
-      profile,
-      _RemoteSigner(this, profile, a['pubkey'] as String),
-      a['address'] as String,
-      a['rendezvous'] as String,
-      spec,
-      light,
-    );
+    if (start != null) light.trust(start, work!);
+    final m = _LightMember(profile, _RemoteSigner(this, profile, a['pubkey'] as String), address, rendezvous, spec, light);
     _lights[profile] = m;
     light.start();
     m.timer = Timer.periodic(const Duration(seconds: 1), (_) => _lightTick(m));
@@ -744,8 +890,14 @@ class ChainWorker {
   /// A full node's head header (a checkpoint, trusted on first use) and the
   /// state after it, every namespace checked against
   /// the header's state root. Null when the chain has no block yet.
-  Future<Map<String, Object?>?> _bootstrap(TestnetSpec spec, String from, String to) async {
-    final cp = await _ask(from, to, {'t': 'getCheckpoint'});
+  Future<Map<String, Object?>?> _bootstrap(TestnetSpec spec, String from, String to, {Header? at, BigInt? work}) async {
+    // At a header the chain check vouched for, or else the peer's head.
+    final Map cp;
+    if (at != null) {
+      cp = {'header': at.toJson(), 'work': '$work'};
+    } else {
+      cp = await _ask(from, to, {'t': 'getCheckpoint'});
+    }
     if (cp['header'] == null) return null;
     final header = Header.fromJson(cp['header'] as Map);
     if (!header.signed) throw StateError('The checkpoint a peer sent is not signed.');
@@ -779,12 +931,21 @@ class ChainWorker {
     await File('${f.path}.tmp').rename(f.path);
   }
 
+  void _archive(_Member m) {
+    final from = max(m.archive.anchor.height + 1, m.archive.height - 20);
+    m.archive.put([for (final b in m.node.chainFrom(from)) Header.of(b)]);
+  }
+
   Future<void> _saveSnapshot(_Member m) async {
+    // The archive reaches the snapshot's block, so the node serves the
+    // state at its archive's tip after a restart.
+    _archive(m);
+    await m.archive.save();
     final f = File('${m.dir}/snapshot.json');
     await File('${f.path}.tmp').writeAsString(jsonEncode(m.node.snapshot()));
     await File('${f.path}.tmp').rename(f.path);
     final p = File('${m.dir}/peers.json');
-    await File('${p.path}.tmp').writeAsString(jsonEncode(m.node.peers.take(_keptPeers).toList()));
+    await File('${p.path}.tmp').writeAsString(jsonEncode(_fullPeers(m).take(_keptPeers).toList()));
     await File('${p.path}.tmp').rename(p.path);
   }
 
@@ -880,6 +1041,9 @@ class ChainWorker {
 
   void _tick(_Member m) {
     m.ticks++;
+    // The newest headers into the archive, a few below its top again in
+    // case the chain turned.
+    if (m.ticks % 5 == 0) _archive(m);
     // Keeps meeting other full nodes: often while it knows none, then now
     // and then, so the network stays joined up as nodes come and go.
     if (m.ticks % (_fullPeers(m).isEmpty ? 30 : 300) == 1) _hello(m.address, m.rendezvous, full: true);

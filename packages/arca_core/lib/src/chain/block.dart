@@ -99,8 +99,28 @@ class Block {
     'proof': proof,
   };
 
-  static Uint8List _headerBytes(Map<String, Object?> header) =>
-      Uint8List.fromList(c.sha256.convert(utf8.encode(canonicalJson(['arca-block-v2', header]))).bytes);
+  /// The hash of a header's mining proof ('' for a block without one). The
+  /// block's hash commits to it rather than to the proof itself, so a
+  /// header can travel without its proof (a summary, about a quarter of
+  /// the size) and still be checked against its hash and signature; the
+  /// proof is fetched only for the headers a newcomer samples
+  /// (chain/verify.dart).
+  static String proofHashOf(Map<String, Object?> header) {
+    if (header['proofHash'] case final String given) return given;
+    final p = header['proof'] as Map? ?? const {};
+    return p.isEmpty ? '' : toHex(c.sha256.convert(utf8.encode(canonicalJson(p))).bytes);
+  }
+
+  /// [header] without its proof, naming the proof's hash instead.
+  static Map<String, Object?> summaryOf(Map<String, Object?> header) => {
+    for (final e in header.entries)
+      if (e.key != 'proof') e.key: e.value,
+    'proofHash': proofHashOf(header),
+  };
+
+  static Uint8List _headerBytes(Map<String, Object?> header) => Uint8List.fromList(
+    c.sha256.convert(utf8.encode(canonicalJson(['arca-block-v3', summaryOf(header)]))).bytes,
+  );
 
   String get hash => toHex(_headerBytes(header));
 

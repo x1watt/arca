@@ -352,6 +352,9 @@ extension _Chain on CoreService {
         return _chainJoin(light: args['light'] as bool?, spec: (args['spec'] as Map?)?.cast<String, Object?>());
       case 'chainLeave':
         return _chainLeave();
+      case 'chainCheckpoint':
+        final r = await _chainCmd('checkpoint', {'profile': id});
+        return r;
       case 'chainSpec':
         // The spec of the network this profile takes part in (the seed node
         // writes it out to be built into the app).

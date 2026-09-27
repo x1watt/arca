@@ -10,7 +10,10 @@
 // network; later runs take no files and pick up where the last one stopped.
 // The network's spec goes to <data dir>/spec.json: built into the app
 // (TestnetSpec._builtInSpec), it makes every copy of Arca find this network
-// by itself. SIGINT or SIGTERM stops it cleanly.
+// by itself. <data dir>/checkpoint.json holds its latest block, to build
+// into a release (TestnetSpec._builtInCheckpoint): devices check the chain
+// they are shown from there and refuse any chain without it. SIGINT or
+// SIGTERM stops it cleanly.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -101,8 +104,11 @@ Future<void> main(List<String> args) async {
   File('$dir/spec.json').writeAsStringSync(jsonEncode(spec));
   say('network ${chain!['spec']}, spec in $dir/spec.json');
 
-  // A line a minute, for the service's log.
+  // A line a minute, for the service's log, and the head as a checkpoint
+  // a release can build in (TestnetSpec._builtInCheckpoint).
   while (!stopping) {
+    final cp = await core.handle('chainCheckpoint', {});
+    if (cp['anchor'] != null) File('$dir/checkpoint.json').writeAsStringSync(jsonEncode(cp['anchor']));
     s = await core.handle('state', {});
     final c = (s['chain'] as Map?) ?? const {};
     say(

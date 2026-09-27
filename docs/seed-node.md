@@ -57,3 +57,5 @@ The seed stops cleanly on SIGTERM. `Restart=always` brings it back after any sto
 ### Building the network into the app
 
 Put the contents of `spec.json` in `TestnetSpec._builtInSpec` (`packages/arca_core/lib/src/chain/testnet.dart`) and release the app. To try a network before that, point `ARCA_TESTNET_SPEC` at a spec file when starting a desktop app.
+
+With each release, also put the contents of `checkpoint.json` (the seed's latest block, rewritten every minute) in `TestnetSpec._builtInCheckpoint`. Devices then check the chain they are shown from that block on, which is less to download and check, and refuse any chain that does not contain it: even a first run that meets nothing but forgers cannot be led onto another chain from before it (`docs/architecture.md`, 10).

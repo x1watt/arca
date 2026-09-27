@@ -47,6 +47,7 @@ class LightClient {
     required this.link,
     List<String> peers = const [],
     DateTime Function()? now,
+    this.askCheckpoint = true,
   }) : peers = {...peers}..remove(address),
        _now = now ?? DateTime.now {
     _known[''] = _Known(null, BigInt.zero);
@@ -58,6 +59,18 @@ class LightClient {
   final String address;
   final MessageLink link;
   final Set<String> peers;
+
+  /// Whether a client that knows nothing asks a peer for a checkpoint and
+  /// trusts it. The app does not: it checks a chain first
+  /// (chain/verify.dart) and starts from its tip with [trust].
+  final bool askCheckpoint;
+
+  /// Starts from [h], a header whose chain was checked, with [work] up to
+  /// it.
+  void trust(Header h, BigInt work) {
+    _known[h.hash] = _Known(h, work);
+    _chooseHead();
+  }
   final DateTime Function() _now;
 
   final _known = <String, _Known>{};
@@ -125,7 +138,7 @@ class LightClient {
   void _sync() {
     if (peers.isEmpty) return;
     final peer = peers.elementAt(_turn++ % peers.length);
-    if (_head.isEmpty && !_checkpointAsked) {
+    if (_head.isEmpty && askCheckpoint && !_checkpointAsked) {
       _checkpointAsked = true;
       unawaited(_checkpoint(peer));
     }

@@ -37,11 +37,14 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 
 - [x] A seed node: a headless founder (`tool/seed_node.dart`), run as a service, that keeps a public collection and the test network going. Tried on I2P: founds the network, stops cleanly on SIGTERM, resumes where it stopped, and a desktop app joined it with one button. A restart used to cut it off from its peers for up to ten minutes (they held its old tunnels); nodes now remember their peers (`docs/performance.md`, 3.16).
 - [x] No invites: the test network is built into the app (`TestnetSpec.builtIn`), and nodes find each other at a meeting point, an I2P address made from the network's spec that every full node answers for; a new full node fetches the corpus by hash from the nodes it met (`docs/architecture.md` 10).
+- [x] A newcomer checks the chains it is shown instead of trusting a checkpoint: all answers at the meeting point, header summaries from a trusted anchor, mining proofs checked in full for the newest blocks and a sample drawn by work, the heaviest chain that holds up; checkpoints built into each release (`docs/architecture.md` 10, `test/core_meeting_test.dart`).
 - [ ] Run the seed somewhere that stays on, with a public-domain corpus, and put its `spec.json` in `TestnetSpec._builtInSpec`.
 - [x] Joining with one button: "Take part in the test network" in the wallet.
 - [x] Docs for running a seed node and for joining (`docs/seed-node.md`).
 
 ## Later
+
+- The header archive on disk, with only recent headers in memory (`docs/performance.md` 3.19).
 
 - Similar-file matching (TLSH for bytes, PDQ for images).
 - Circle relays (architecture 4.5) and Blossom (4.6).

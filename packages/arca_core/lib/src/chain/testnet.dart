@@ -20,6 +20,7 @@ import 'corpus.dart';
 import 'params.dart';
 import 'state.dart';
 import 'tx.dart' show canonicalJson;
+import 'verify.dart' show Anchor;
 
 /// Marcas the founder starts with, to try sending and passes.
 const testnetAllocation = 10000 * ChainParams.grainsPerMarca;
@@ -126,6 +127,22 @@ class TestnetSpec {
 
   /// The public test network's spec, as `tool/seed_node.dart` writes it.
   static const _builtInSpec = '';
+
+  /// A recent block of the built-in network, as the seed node prints it
+  /// for a release: a device checks the chain it is shown from here on
+  /// (chain/verify.dart) and refuses any chain that does not contain it,
+  /// so even a first run among nothing but forgers cannot be led onto
+  /// another chain from before it. Null for none (checks start at genesis).
+  static final Anchor? builtInCheckpoint = () {
+    if (_builtInCheckpoint.trim().isEmpty || builtIn == null) return null;
+    try {
+      return Anchor.fromJson(jsonDecode(_builtInCheckpoint) as Map);
+    } on Object {
+      return null;
+    }
+  }();
+
+  static const _builtInCheckpoint = '';
 }
 
 /// Builds the corpus of [files] (SHA-256 to path, all of them present).

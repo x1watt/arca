@@ -161,13 +161,13 @@ A keeper's mining read is cheap (one 1 KB read per declared partition per tick),
 
 - A node checks each block once: the resulting state is kept with the block, and a block seen again is dropped by its hash before any work.
 - Holding proofs arrive as a burst early each day (one per declared partition per keeper). Checking them must never run on the UI isolate, and when the chain node moves into the core it must not block the core isolate either: proof checks go to a worker, like transcription (4.1), with the core only handing over the proof and taking back the verdict.
-- Phones will not check every proof; they follow headers and fraud proofs (milestone 6).
+- Phones do not check every proof: they check a chain once when they start (3.19), then follow headers and fraud proofs.
 - Chain traffic is bounded: a node asks one peer per block interval for news, a `get` is answered with at most 64 blocks, and a burst of orphans from one peer asks once per tick. Catching up after a long absence takes several rounds by design, not one flood.
 - A producer checks each transaction once: it applies it to a copy of the state and keeps that copy, instead of trying it on a copy and then applying it again, which cost every holding proof two Argon2id.
 - A day is settled in steps: each holding proof updates running totals as it lands (a few entries), and after the day each block settles as many keepers as it takes to finish within half a day (at least eight), each step touching one keeper's entries. No block goes through every keeper, and each step is its own trace entry, so a fraud proof is one step: about 13 KB with 400 keepers, growing with the logarithm of their number. Each step computes a state root, so the incremental tree (below) matters more with many keepers.
 - A circle log is checked entry by entry, each with one or more Schnorr signatures in plain Dart. A device keeps the folded log and checks only new entries; replaying a long log from the start is for a new device, off the UI isolate.
 - A block computes a state root after every step (its trace). Each namespace keeps its root until touched, but a touched namespace is rebuilt whole (n log n hashes), and balances are touched by nearly every transaction. Fine at testnet size; mainnet needs an incremental tree that rehashes only the changed paths.
-- A light client never runs Argon2id: it checks a header's proof quality with one hash and leaves the memory-hard check to fraud proofs. Choosing its head goes through every header it holds; to be bounded to recent headers before phones hold months of them.
+- A light client runs Argon2id only when it starts, to check the chain it is shown (3.19); after that it checks a header's proof quality with one hash and leaves the memory-hard check to fraud proofs. Choosing its head goes through every header it holds; to be bounded to recent headers before phones hold months of them.
 - Reading receipts cost the reader one Schnorr signature and the server one check per 256 KB delivered, not per chunk; a `HELLO` costs one of each per server per download at most.
 - A phone in light mode checks no proof of storage at all: after each new head it asks a full node for five proven entries (balance, nonce, circle, standing, sync score), a few KB and five signature-free hash checks.
 
@@ -212,6 +212,15 @@ Switching the C61 to keep files took 75 s of processor time and 7.6 MB in its fi
 What remains is mostly following itself: a request for headers every block and the I2P node's own upkeep. Fewer requests carrying several headers each would halve it again.
 
 With the screen off, Android freezes Arca within a few minutes: no bytes at all and about 0.3 s of processor time in five minutes. A phone in a pocket therefore costs nothing and follows nothing, and its tunnels expire. When the screen comes back, Arca was following again after about four minutes (I2P reconnecting for two, catching up for two); the heartbeat (3.17) now starts that at once. Keeping files on a phone with the screen off would need an Android foreground service, which Arca does not have.
+
+### 3.19 Checking a chain before trusting it
+
+A newcomer checks each chain it is shown from its anchor (`docs/architecture.md` 10): all header summaries, and 32 mining proofs in full (the newest 8 and 24 drawn by work), from each of up to six nodes met, in parallel. Costs:
+
+- Summaries are about 700 bytes a block, so the download grows with the chain since the anchor: 1 MB a day on the main network (1440 blocks), 6 MB a day on the test network (8640). This is why each release builds in a recent checkpoint, and why a light device keeps the tip it checked last and checks only from there at its next start.
+- 32 Argon2id runs per chain: about 5 s on this desktop with the test network's 32 MB, several times that on a phone, once per start and per chain shown, on the chain worker's isolate.
+- Over live I2P, a newcomer met the founder, checked its chain and started from its state 26 s after asking (`tool/live_wallet_check.dart`, a young chain).
+- A full node keeps every header since its anchor with its proof (about 3 KB each) to serve them: 26 MB a day on the test network, 4 MB a day on the main network, in memory for now. To be kept on disk, with only recent headers in memory, before a node runs for weeks.
 
 ---
 

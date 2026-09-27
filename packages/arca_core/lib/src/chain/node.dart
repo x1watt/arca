@@ -30,6 +30,7 @@ import 'params.dart';
 import 'smt.dart';
 import 'state.dart';
 import 'tx.dart';
+import 'verify.dart' show Anchor;
 
 String _short(String? s) => s == null || s.length <= 6 ? '$s' : s.substring(0, 6);
 
@@ -146,6 +147,15 @@ class ChainNode {
 
   ChainState get state => _head.state;
   String get headHash => _head.block?.hash ?? '';
+
+  /// The head as an anchor (chain/verify.dart): what a release builds in
+  /// as a checkpoint.
+  Anchor get headAnchor => Anchor(
+    hash: headHash,
+    height: _head.block?.height ?? 0,
+    tick: _head.block?.tick ?? 0,
+    work: _head.work,
+  );
   int get currentTick => _now().millisecondsSinceEpoch ~/ params.tickMillis;
 
   void start() {

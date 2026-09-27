@@ -29,6 +29,7 @@ import 'dart:typed_data';
 import '../crypto/hex.dart';
 import 'block.dart';
 import 'merkle.dart';
+import 'mining.dart' show expectedWork;
 import 'params.dart';
 import 'rewards.dart' show settleOne;
 import 'smt.dart';
@@ -67,7 +68,20 @@ class Header {
   String get stateRoot => fields['stateRoot'] as String;
   String get traceRoot => fields['traceRoot'] as String;
   String get corpusRoot => fields['corpusRoot'] as String;
-  Map<String, Object?> get proof => (fields['proof'] as Map).cast<String, Object?>();
+  Map<String, Object?> get proof => (fields['proof'] as Map? ?? const {}).cast<String, Object?>();
+
+  /// Whether this is a summary: the header without its mining proof, which
+  /// it names by hash (Block.summaryOf).
+  bool get isSummary => !fields.containsKey('proof');
+
+  String get proofHash => Block.proofHashOf(fields);
+
+  /// This header as a summary.
+  Header get summary => Header(Block.summaryOf(fields), sig);
+
+  /// The work this header claims: what its target stands for, or one for a
+  /// block without a mining proof.
+  BigInt get work => proofHash.isEmpty ? BigInt.one : expectedWork(target);
 
   /// The block this header describes, without its transactions (a node
   /// that starts from a checkpoint knows its base by its header).
