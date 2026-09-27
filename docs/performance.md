@@ -222,6 +222,16 @@ A newcomer checks each chain it is shown from its anchor (`docs/architecture.md`
 - Over live I2P, a newcomer met the founder, checked its chain and started from its state 26 s after asking (`tool/live_wallet_check.dart`, a young chain).
 - A full node keeps every header since its anchor with its proof (about 3 KB each) to serve them: 26 MB a day on the test network, 4 MB a day on the main network, in memory for now. To be kept on disk, with only recent headers in memory, before a node runs for weeks.
 
+### 3.20 Private marcas
+
+Private payments are paid for in elliptic-curve work, all in plain Dart on BigInt (`crypto/curve.dart`), on the chain worker's isolate:
+
+- A range proof (Bulletproof, 64 bits) takes about 420 ms to make and 60 ms to check on this desktop; more on a phone. A payment makes two outputs (the payment and the change), so building one costs under a second here; every full node checks each output once, when the block is applied.
+- Fixed bases (G, H) use precomputed tables, and sums of many products one interleaved pass (`Point.multiExp`), which is where range proofs spend their time: the checker folds all of a proof's equations into one multi-exponentiation of about 150 points.
+- A payment is about 2 KB (two 688-byte proofs, stealth data, signatures), so a block carries about ten; the state keeps about 110 bytes per unspent output and nothing of spent ones.
+- Scanning costs one multiplication per new output (a*R), then the one-byte view tag skips 255 in 256 before the key check. A light device first downloads the list of unspent outputs from a full node (about 150 bytes each), then proves the few it owns.
+- The supply checks add up every unspent output's commitment, one addition each, once a minute on full nodes.
+
 ---
 
 ## 4. The heavy jobs and how they are run

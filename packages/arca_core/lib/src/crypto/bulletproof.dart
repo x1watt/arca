@@ -1,5 +1,5 @@
 // Bulletproof range proofs (Bünz, Bootle, Boneh, Poelstra, Wuille, Maxwell,
-// 2018): a commitment V = γ·G + v·H holds a value 0 <= v < 2^64, shown in
+// 2018): a commitment V = gamma*G + v*H holds a value 0 <= v < 2^64, shown in
 // 688 bytes without revealing v. Without them a transaction could spend
 // 10 marcas into outputs of 1 000 010 and -1 000 000, balancing the
 // commitments while creating money (docs/architecture.md, 10).
@@ -93,7 +93,7 @@ class RangeProof {
     return RangeProof._(a!, s!, t1!, t2!, taux!, mu!, that!, ls.cast<Point>(), rs.cast<Point>(), af!, bf!);
   }
 
-  /// A proof that [commitment] = [blinding]·G + [value]·H holds a value
+  /// A proof that [commitment] = [blinding]*G + [value]*H holds a value
   /// in [0, 2^64).
   static RangeProof prove(BigInt value, BigInt blinding, {Point? commitment, Random? random}) {
     if (value < BigInt.zero || value.bitLength > _bits) throw ArgumentError('value out of range');
@@ -127,7 +127,7 @@ class RangeProof {
     final mu = _s(alpha + rho * x);
     final w = hashToScalar('arca/bp/w', [x, taux, mu, that]);
     final q = _u * w;
-    // The inner product argument over G and H' (H'_i = y^-i·H_i).
+    // The inner product argument over G and H' (H'_i = y^-i*H_i).
     final yInv = scalarInverse(y);
     final yInvN = _powers(yInv, _bits);
     var gs = [..._gs];

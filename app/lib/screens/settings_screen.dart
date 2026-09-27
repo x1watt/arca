@@ -189,7 +189,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   subtitle: Text(
                     state.chain == null
                         ? 'Marcas on the test network'
-                        : formatMarcas(state.chain!.balance),
+                        : '${formatMarcas(state.chain!.privateBalance)} private, '
+                              '${formatMarcas(state.chain!.balance)} public',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.of(context).push(

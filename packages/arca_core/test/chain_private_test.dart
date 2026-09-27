@@ -111,6 +111,7 @@ void main() {
     s = await applied(s, Tx.sign(bob, TxType.private, 0, out.body));
     expect(s.balanceOf(bobPub), 5 * ChainParams.grainsPerMarca);
     expect(s.privateSupply, 55 * ChainParams.grainsPerMarca);
+    expect(auditMoney(s), isNull, reason: 'every marca issued is held somewhere');
     expect(total(scan(s, bobKeys)), BigInt.from(20) * m);
   });
 

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../core/core_client.dart';
+import '../widgets/collab.dart' show askText;
 import '../widgets/common.dart';
 
 class WalletScreen extends StatelessWidget {
@@ -152,6 +153,30 @@ class _OnChain extends StatelessWidget {
     );
   }
 
+  Future<void> _move(BuildContext context, {required bool toPrivate}) async {
+    final amount = await askText(
+      context,
+      title: toPrivate ? 'Move to private' : 'Move to public',
+      label: 'Amount in marcas',
+      hint: '12.5',
+    );
+    if (amount == null || amount.isEmpty || !context.mounted) return;
+    await _run(
+      context,
+      Core.instance.chainMove(amount, toPrivate: toPrivate),
+      'Moving. It is done once in a block.',
+    );
+  }
+
+  Future<void> _viewKey(BuildContext context) async {
+    try {
+      final key = await Core.instance.chainViewKey();
+      if (context.mounted) await _copy(context, key, 'View key');
+    } catch (e) {
+      if (context.mounted) showMessage(context, '$e');
+    }
+  }
+
   Future<void> _copy(BuildContext context, String text, String what) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (context.mounted) showMessage(context, '$what copied');
@@ -188,7 +213,6 @@ class _OnChain extends StatelessWidget {
     final muted = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final me = Core.instance.state.value?.active;
     return ListView(
       padding: const EdgeInsets.only(bottom: 32),
       children: [
@@ -201,14 +225,38 @@ class _OnChain extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    formatMarcas(chain.balance),
+                    formatMarcas(chain.privateBalance),
                     style: theme.textTheme.headlineMedium,
                   ),
-                  const SizedBox(height: 4),
+                  Text(
+                    'Private: nobody else sees it, or whom you pay.',
+                    style: muted,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${formatMarcas(chain.balance)} public',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  Text(
+                    'Earned and spent in public: claims, circle fees, passes.',
+                    style: muted,
+                  ),
+                  const SizedBox(height: 8),
                   Text(
                     'Test network "${chain.name}". Its marcas have no value.',
                     style: muted,
                   ),
+                  if (chain.audited != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      chain.audited!
+                          ? 'Checked on this device: every marca adds up, private ones included.'
+                          : 'Warning: the marcas this device holds the state of do not add up.',
+                      style: chain.audited!
+                          ? muted
+                          : muted?.copyWith(color: theme.colorScheme.error),
+                    ),
+                  ],
                   const SizedBox(height: 4),
                   _DayLine(chain: chain),
                   if (chain.pending > 0) ...[
@@ -229,11 +277,29 @@ class _OnChain extends StatelessWidget {
                         label: const Text('Send'),
                       ),
                       OutlinedButton.icon(
-                        onPressed: me == null
+                        onPressed: chain.address.isEmpty
                             ? null
-                            : () => _copy(context, me.npub, 'Your address'),
+                            : () => _copy(
+                                context,
+                                chain.address,
+                                'Your wallet address',
+                              ),
                         icon: const Icon(Icons.qr_code_2_outlined),
                         label: const Text('Receive'),
+                      ),
+                      if (chain.balance > 0)
+                        OutlinedButton(
+                          onPressed: () => _move(context, toPrivate: true),
+                          child: const Text('Move to private'),
+                        ),
+                      if (chain.privateBalance > 0)
+                        OutlinedButton(
+                          onPressed: () => _move(context, toPrivate: false),
+                          child: const Text('Move to public'),
+                        ),
+                      TextButton(
+                        onPressed: () => _viewKey(context),
+                        child: const Text('View key for an auditor'),
                       ),
                     ],
                   ),
@@ -581,7 +647,7 @@ class _SendDialogState extends State<_SendDialog> {
             autofocus: true,
             decoration: const InputDecoration(
               labelText: 'To',
-              hintText: 'npub1... or an Arca address',
+              hintText: 'marca1..., or the npub of someone you follow',
             ),
           ),
           const SizedBox(height: 12),

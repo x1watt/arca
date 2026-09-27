@@ -157,6 +157,10 @@ class _Member {
 
   /// This member's chain's headers, served to newcomers that check it.
   late HeaderArchive archive;
+
+  /// Whether the state's marcas added up at the last check (auditSupply,
+  /// auditMoney); null before the first.
+  bool? audited;
   Map<String, String> files = {};
   Corpus? corpus;
   String? corpusError;
@@ -1176,6 +1180,10 @@ class ChainWorker {
     // The newest headers into the archive, a few below its top again in
     // case the chain turned.
     if (m.ticks % 5 == 0) _archive(m);
+    if (m.ticks % 60 == 1) {
+      final s = m.node.state;
+      m.audited = auditSupply(s) == null && auditMoney(s) == null;
+    }
     if (m.ticks % 2 == 0 && m.wallet.update(m.node.state.outputs.raw)) unawaited(m.wallet.save());
     // Keeps meeting other full nodes: often while it knows none, then now
     // and then, so the network stays joined up as nodes come and go.
@@ -1220,6 +1228,7 @@ class ChainWorker {
       'behind': m.node.currentTick - s.tick > params.blockTicks * 10,
       'peers': m.node.peerCount,
       'balance': s.balanceOf(m.pubkey),
+      'audited': m.audited,
       'private': m.wallet.balance.toInt(),
       'address': m.wallet.address.encoded,
       'pending': m.node.waiting.where((t) => t.from == m.pubkey).length,

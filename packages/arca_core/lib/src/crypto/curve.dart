@@ -137,7 +137,7 @@ class Point {
   /// Tables by the very point object they were made for.
   static final _fixed = Expando<_FixedTable>('fixed base');
 
-  /// Σ ks[i]·points[i], in one pass with 4-bit windows.
+  /// sum(ks[i])*points[i], in one pass with 4-bit windows.
   static Point multiExp(List<Point> points, List<BigInt> ks) {
     assert(points.length == ks.length);
     final n = points.length;

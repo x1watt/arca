@@ -1,7 +1,7 @@
 // Schnorr signatures by any point, not only x-only keys (BIP-340): the
 // chain's private money signs with kernel excesses and one-time output
 // keys, which may have either parity of y. Signature: (R, s) with
-// s·G = R + e·P and e = H(R, P, message).
+// s*G = R + e*P and e = H(R, P, message).
 
 import 'dart:typed_data';
 

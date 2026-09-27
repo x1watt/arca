@@ -242,6 +242,10 @@ void main() {
       (s) => (chainOf(s)['height'] as int? ?? 0) >= heightNow && chainOf(s)['balance'] == 0,
       what: 'a late phone follows from the checkpoint',
     );
+    // Every marca is accounted for on the founder's node, after rewards,
+    // claims, a pass and private payments.
+    await waitFor(a, (s) => chainOf(s)['audited'] != null, what: 'the founder checked its marcas', seconds: 70);
+    expect(chainOf(await a.handle('state', {}))['audited'], isTrue);
     for (final c in [late, lateLight, a, b]) {
       await c.close();
     }

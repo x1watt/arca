@@ -147,6 +147,8 @@ Two consequences. A circle whose members keep only their own archive and nothing
 
 **Why burning.** Half of every pass is burned, so buying passes on your own files to look popular always loses half, and the burned marcas benefit every holder. Burns are also the one popularity signal nobody can fake for free.
 
+**Private but auditable.** Payments between people are private, in the manner of Mimblewimble (Beam, Grin, Litecoin's MWEB): amounts are hidden in commitments with range proofs, and every output goes to a one-time key only its receiver can spend, so a payment names neither payer nor payee. What earns is public, because it must be checked to be rewarded: keeping, pools, payout tables, issuance and burns. The two meet at public balances, which the protocol pays and charges, and a wallet moves marcas between its public balance and its private side. Anyone can check from the chain's state alone that the private side holds exactly what was moved into it, and that every marca issued is burned or held somewhere. A wallet can hand an auditor a view key that shows what it received and spent without the power to spend, and a sender can prove a single payment.
+
 **Trust.** Every circle has a trust score on the global chain, computed by fixed rules from its interest, its age and the correctness of its index (shards proven wrong by resampling lower it). Trust changes nothing in issuance; it is shown beside every search result and decides which circles clients subscribe to by default. Good curation earns visibility.
 
 ## 9. Reading and serving

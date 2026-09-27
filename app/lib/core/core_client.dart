@@ -667,6 +667,9 @@ class ChainView {
     required this.behind,
     required this.peers,
     required this.balance,
+    required this.privateBalance,
+    required this.address,
+    required this.audited,
     required this.pending,
     required this.mining,
     required this.paused,
@@ -708,8 +711,20 @@ class ChainView {
   final bool behind;
   final int peers;
 
-  /// In grains (1 marca = 100,000,000 grains).
+  /// The public balance, in grains (1 marca = 100,000,000 grains): what
+  /// the protocol paid or charges this key in public (claims, pass shares,
+  /// burns, circle fees, passes).
   final int balance;
+
+  /// The private balance, in grains: what the wallet found it owns.
+  final int privateBalance;
+
+  /// The wallet address others pay privately (marca1...).
+  final String address;
+
+  /// Whether this device checked that every marca adds up (full nodes; null
+  /// on a light device or before the first check).
+  final bool? audited;
   final int pending;
   final bool mining;
 
@@ -756,6 +771,9 @@ class ChainView {
       behind: m['behind'] as bool,
       peers: m['peers'] as int,
       balance: m['balance'] as int,
+      privateBalance: m['private'] as int? ?? 0,
+      address: m['address'] as String? ?? '',
+      audited: m['audited'] as bool?,
       pending: m['pending'] as int,
       mining: m['mining'] as bool,
       paused: m['paused'] as String?,
@@ -1327,8 +1345,23 @@ class Core {
 
   Future<String?> chainJoin() => _change('chainJoin', {});
   Future<String?> chainLeave() => _change('chainLeave');
+
+  /// A private payment to a wallet address, or to the npub of someone
+  /// followed whose profile names one.
   Future<String?> chainSend(String to, String amount) =>
       _change('chainSend', {'to': to, 'amount': amount});
+
+  /// Moves marcas between the public balance and the private side.
+  Future<String?> chainMove(String amount, {required bool toPrivate}) =>
+      _change('chainMove', {'amount': amount, 'toPrivate': toPrivate});
+
+  /// The wallet's view key, for an auditor (sees, cannot spend).
+  Future<String> chainViewKey() async {
+    final r = await _call('chainViewKey');
+    if (r['error'] != null) throw Exception(r['error']);
+    return r['viewKey'] as String;
+  }
+
   Future<String?> chainKeep(int partition, bool keep) =>
       _change('chainKeep', {'partition': partition, 'keep': keep});
   Future<String?> chainMining(bool on) => _change('chainMining', {'on': on});

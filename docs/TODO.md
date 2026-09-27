@@ -42,7 +42,15 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 - [x] Joining with one button: "Take part in the test network" in the wallet.
 - [x] Docs for running a seed node and for joining (`docs/seed-node.md`).
 
+## 5. Private, auditable marcas
+
+- [x] Mimblewimble with stealth outputs: amounts hidden (commitments, Bulletproofs), no accounts on private payments, the receiver may be offline; supply and all marcas checkable from the state; view keys and payment proofs (`docs/architecture.md` 10).
+- [ ] Time building and checking a payment on the C61.
+- [ ] Faster curve arithmetic if phones need it (fixed-width field elements instead of BigInt).
+
 ## Later
+
+- Hiding which outputs a transaction spends (rings or a shielded pool), if needed.
 
 - The header archive on disk, with only recent headers in memory (`docs/performance.md` 3.19).
 

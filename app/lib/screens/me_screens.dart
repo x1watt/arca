@@ -341,8 +341,12 @@ class HelpScreen extends StatelessWidget {
       'Marcas pay people for keeping files safe. On the test network, which is built into Arca and found over I2P '
           'without any address to type, devices keep copies of its files, prove every day that they still hold '
           'them, and earn for their circle. '
-          'The circle\'s admin pays out its pool; members claim their share. Test marcas have no value. Phones '
-          'follow lightly by default and keep nothing, so they cost little battery.',
+          'The circle\'s admin pays out its pool; members claim their share, which is public. Payments between '
+          'people are private: nobody sees how much, who paid or who was paid. Move marcas from your public '
+          'balance to the private side in the wallet, and give people your wallet address (marca1...). An '
+          'auditor you trust can be given a view key: it shows what you received and spent, and cannot spend. '
+          'Test marcas have no value. Phones follow lightly by default and keep nothing, so they cost little '
+          'battery.',
     ),
     (
       Icons.tune,

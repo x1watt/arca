@@ -6,12 +6,12 @@
 //
 //   input:  the commitment C of an unspent output, signed by its one-time
 //           key K (only the receiver knows its secret);
-//   output: C = r·G + v·H, with R, K, a view tag, the value encrypted to
+//   output: C = r*G + v*H, with R, K, a view tag, the value encrypted to
 //           the receiver, and a range proof that 0 <= v < 2^64;
 //   kernel: the excess E, signed by E, and pub, marcas moved in (+) from
 //           the signer's public balance or out (-) to it.
 //
-// It balances when ΣC_out - ΣC_in - pub·H = E: the signature by E shows E
+// It balances when sum(C_out) - sum(C_in) - pub*H = E: the signature by E shows E
 // has no H part, so no marcas were made. Every signature covers the whole
 // transaction (the message below), so nothing can be swapped. A payment
 // between wallets has pub = 0 and no account at all; moving marcas between
@@ -19,7 +19,7 @@
 //
 // The state keeps the unspent outputs (without their proofs), the sum of
 // every excess and the private supply, so anyone can check from a snapshot
-// that ΣC over all outputs = excessSum + supply·H: no marcas were created
+// that sum(C) over all outputs = excessSum + supply*H: no marcas were created
 // on the private side (auditSupply).
 
 import 'dart:convert';
@@ -137,8 +137,8 @@ void applyPrivate(ChainState s, Tx tx) {
   s.excessSum = s.excessSum + excess;
 }
 
-/// Whether the private side holds no more than was moved into it: ΣC over
-/// every unspent output = excessSum + supply·H. Null when it holds, else
+/// Whether the private side holds no more than was moved into it: sum(C) over
+/// every unspent output = excessSum + supply*H. Null when it holds, else
 /// why not.
 String? auditSupply(ChainState s) {
   var sum = Point.infinity;
@@ -152,6 +152,26 @@ String? auditSupply(ChainState s) {
     return 'the outputs do not add up to what was moved in';
   }
   return null;
+}
+
+/// Whether every marca is accounted for: what was issued minus what was
+/// burned equals the public balances, the circles' pools, the passes still
+/// open, and the private supply. Null when it holds, else the numbers.
+String? auditMoney(ChainState s) {
+  var public = 0, pools = 0, passes = 0;
+  for (final v in s.balances.raw.values) {
+    public += v;
+  }
+  for (final c in s.circles.raw.values) {
+    pools += c.pool;
+  }
+  for (final p in s.passes.raw.values) {
+    passes += p.price;
+  }
+  final held = public + pools + passes + s.privateSupply;
+  if (held == s.issued - s.burned) return null;
+  return 'issued ${s.issued} - burned ${s.burned} = ${s.issued - s.burned}, but public $public + pools $pools'
+      ' + open passes $passes + private ${s.privateSupply} = $held';
 }
 
 Point? _point(Object? hex) {

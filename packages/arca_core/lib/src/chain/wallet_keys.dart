@@ -2,13 +2,13 @@
 // (docs/architecture.md, 10, private marcas).
 //
 // Two keys, both derived from the profile's secret so there is nothing new
-// to back up: the spend key b (B = b·G), which only the owner holds, and
-// the scan key a (A = a·G), which finds and reads what the wallet
+// to back up: the spend key b (B = b*G), which only the owner holds, and
+// the scan key a (A = a*G), which finds and reads what the wallet
 // receives and can be handed to an auditor. The address is A and B.
 //
 // A payment to (A, B) needs no answer from the receiver: the sender picks e
-// and publishes R = e·G; both then know t = H(e·A) = H(a·R). The output's
-// one-time key is K = t·G + B (its secret, t + b, needs b), its blinding is
+// and publishes R = e*G; both then know t = H(e*A) = H(a*R). The output's
+// one-time key is K = t*G + B (its secret, t + b, needs b), its blinding is
 // derived from t, and its value is encrypted with a mask from t. Outputs
 // to one address share nothing an outsider can link.
 
@@ -22,7 +22,7 @@ import '../nostr/nip19.dart';
 class WalletAddress {
   const WalletAddress(this.scan, this.spend);
 
-  /// A = a·G and B = b·G.
+  /// A = a*G and B = b*G.
   final Point scan, spend;
 
   static const hrp = 'marca';
@@ -103,7 +103,7 @@ class ViewKeys {
   }
 }
 
-/// t from the shared point e·A = a·R.
+/// t from the shared point e*A = a*R.
 BigInt sharedSecret(Point shared) => hashToScalar('arca/stealth', [shared]);
 
 /// The output's blinding, from t.
