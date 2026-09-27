@@ -236,7 +236,7 @@ The client embeds `i2p-dart` (`../i2p-dart`, package `i2p`): a pure-Dart I2P rou
 - `announce`, `discover`, `fetchByB32` and the swarm for file content by SHA-256.
 - `addSharedDestination` so one node answers for every active profile.
 
-There is exactly one node per device. Its router state (`stateDir`) is kept so restarts skip the reseed. "Up" is checked, not trusted: every five minutes a profile sends itself a probe over I2P, and after three missing in a row the network manager starts the node afresh under the same link and addresses, so relays, file serving and the chain carry on (`docs/performance.md`, 3.17).
+There is exactly one node per device. Its router state (`stateDir`) is kept so restarts skip the reseed. "Up" is checked, not trusted: every five minutes a profile sends itself a probe over I2P, and after three missing in a row the network manager starts the node afresh under the same link and addresses, so relays, file serving and the chain carry on. A heartbeat notices when the process was frozen or the computer slept: after a gap longer than the tunnels live the node starts afresh at once (`docs/performance.md`, 3.17).
 
 ### 5.2 Ports
 

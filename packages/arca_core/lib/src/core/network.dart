@@ -220,6 +220,17 @@ class NetworkManager {
   int probesSent = 0, probesBack = 0;
   Duration? lastProbe;
   Timer? _probeTimer;
+
+  /// A process that was frozen (a phone with its screen off) or a computer
+  /// that slept comes back with its tunnels expired. A heartbeat notices
+  /// the gap: after one longer than the tunnels live, the transport starts
+  /// afresh at once; after a shorter one, a probe goes out at once and a
+  /// single miss is enough.
+  Duration heartbeat = const Duration(seconds: 20);
+  Duration tunnelLife = const Duration(minutes: 10);
+  bool _restarting = false;
+  Timer? _beatTimer;
+  DateTime _lastBeat = DateTime.now();
   int _missed = 0;
   bool _probing = false;
   final _rng = Random.secure();
@@ -264,12 +275,27 @@ class NetworkManager {
       await _attach(p);
     }
     _probeTimer ??= Timer.periodic(probeEvery, (_) => _probe());
+    _lastBeat = DateTime.now();
+    _beatTimer ??= Timer.periodic(heartbeat, (_) => _beat());
     onChange?.call();
   }
 
+  void _beat() {
+    final now = DateTime.now();
+    final gap = now.difference(_lastBeat);
+    _lastBeat = now;
+    if (gap < heartbeat * 3 || state == NetState.starting) return;
+    stderr.writeln('network: back after ${gap.inSeconds} s without running');
+    if (gap > tunnelLife) {
+      unawaited(_restart());
+    } else {
+      unawaited(_probe(missesAllowed: 1));
+    }
+  }
+
   /// Sends a probe from one of our addresses to itself and waits for it.
-  /// After [probeMisses] misses in a row, restarts the transport.
-  Future<void> _probe() async {
+  /// After [missesAllowed] misses in a row, restarts the transport.
+  Future<void> _probe({int? missesAllowed}) async {
     if (_probing || _addresses.isEmpty) return;
     if (state == NetState.failed) return _restart();
     if (state != NetState.up) return;
@@ -293,8 +319,9 @@ class NetworkManager {
         return;
       }
       _missed++;
-      stderr.writeln('network: probe $_missed of $probeMisses went missing');
-      if (_missed < probeMisses) return;
+      final allowed = missesAllowed ?? probeMisses;
+      stderr.writeln('network: probe $_missed of $allowed went missing');
+      if (_missed < allowed) return;
       _missed = 0;
       stderr.writeln('network: nothing gets through; starting the transport afresh');
       await _restart();
@@ -306,14 +333,20 @@ class NetworkManager {
   /// Starts the transport afresh under the same link and addresses; tried
   /// again at the next probe if it fails.
   Future<void> _restart() async {
-    restarts++;
-    state = NetState.starting;
-    error = null;
-    onChange?.call();
-    final up = await backend.restart();
-    state = up ? NetState.up : NetState.failed;
-    if (!up) error = 'The I2P node stopped answering and could not start again yet; Arca keeps trying.';
-    onChange?.call();
+    if (_restarting) return;
+    _restarting = true;
+    try {
+      restarts++;
+      state = NetState.starting;
+      error = null;
+      onChange?.call();
+      final up = await backend.restart();
+      state = up ? NetState.up : NetState.failed;
+      if (!up) error = 'The I2P node stopped answering and could not start again yet; Arca keeps trying.';
+      onChange?.call();
+    } finally {
+      _restarting = false;
+    }
   }
 
   static bool _same(Uint8List a, Uint8List b) {
@@ -373,6 +406,8 @@ class NetworkManager {
   Future<void> stop() async {
     _probeTimer?.cancel();
     _probeTimer = null;
+    _beatTimer?.cancel();
+    _beatTimer = null;
     for (final n in _nodes.values) {
       await n.close();
     }

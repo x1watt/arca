@@ -189,13 +189,26 @@ After about two hours on the C61, the app still showed its network as up and one
 
 Fix (`core/network.dart`): the network manager checks the whole path instead of trusting "up". Every five minutes a profile sends itself a probe (tag `0xB0`, a random nonce) over I2P, which goes out through a gateway, looks up the profile's own leases and comes back through its inbound tunnels. When three probes in a row go missing (fifteen minutes deaf), the manager starts the I2P node afresh under the same link and addresses (`NetworkBackend.restart`), so relays, file serving and the chain carry on without noticing. A probe costs one small message and a lease lookup. Tested with a loopback network that takes messages and delivers none (`test/network_probe_test.dart`).
 
-Measured on the live network (`tool/probe_check.dart`, a probe every 30 s): a probe comes back in 300 to 370 ms.
+Measured on the live network (`tool/probe_check.dart`, a probe every 30 s for 25 minutes, through two gateway rotations): 49 of 50 probes came back (the last was cut by the shutdown), in 300 to 370 ms, and nothing was restarted.
+
+The same deafness hit the seed node after the computer slept for seven hours: it came back reporting "up" with its peers, and neither the phone nor a desktop could reach it (both got "No answer over I2P") until it was restarted; the phone then followed again within a minute. A process that was frozen (a phone with its screen off, section 3.18) or a computer that slept always comes back with its tunnels expired, so the manager also keeps a heartbeat every 20 s: a gap longer than the tunnels live (ten minutes) starts the transport afresh at once, and after a shorter gap a probe goes out at once and one miss is enough.
+
+Tried by freezing the seed for twelve minutes (SIGSTOP, then SIGCONT). The first try found a crash in `i2p-dart`: a message already on its way from the stopped node's isolate reached its closed stream and ended the process (fixed there, ac150c1). The second: the seed noticed the 733 s gap, started I2P afresh at once, was up and making blocks within a minute, and the C61 then followed it at the same height.
 
 ### 3.18 A light phone that was not light
 
 The C61 following the test network lightly (no files kept), in its steady state, used 28 s of processor time every five minutes (about 9% of one core) and moved 3.1 MB in and 2.2 MB out: about 37 MB an hour received. The chain gives it little to carry: a header every ten seconds. What cost was the wallet: at every new block, five proven reads (balance, nonce, circle, standing, sync score), each a request and an answer with Merkle proofs, and I2P sends every message to each of the destination's gateways over two paths, so each read crosses the network up to eight times.
 
 Fix (`chain/worker.dart`): a light device reads at each new block only while a transaction of its own waits; otherwise every six blocks (a minute on the test network), which is as fresh as a wallet needs to be.
+
+| C61, light, screen on, following the test network | Processor | Received | Sent |
+|---|---|---|---|
+| Before (90 minutes) | 8.6% of one core | 36.7 MB/h | 25.7 MB/h |
+| After (25 minutes) | 4.9% of one core | 15.9 MB/h | 9.3 MB/h |
+
+What remains is mostly following itself: a request for headers every block and the I2P node's own upkeep. Fewer requests carrying several headers each would halve it again.
+
+With the screen off, Android freezes Arca within a few minutes: no bytes at all and about 0.3 s of processor time in five minutes. A phone in a pocket therefore costs nothing and follows nothing, and its tunnels expire. When the screen comes back, Arca was following again after about four minutes (I2P reconnecting for two, catching up for two); the heartbeat (3.17) now starts that at once. Keeping files on a phone with the screen off would need an Android foreground service, which Arca does not have.
 
 ---
 
