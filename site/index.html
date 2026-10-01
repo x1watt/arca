@@ -102,6 +102,12 @@ pre.code { background: var(--code-bg); color: var(--code-fg); border-radius: 12p
 .split div { display: flex; align-items: center; justify-content: center; }
 .split .s { width: 30%; background: var(--amber-soft); color: var(--amber-strong); }
 .split .i { width: 70%; background: var(--amber); color: #1c1306; }
+.dl { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+.dl .card { display: flex; flex-direction: column; gap: 10px; }
+.dl .os { font-size: 22px; font-weight: 700; }
+.dl .meta { color: var(--fg-dim); font-size: 14px; }
+.dl .btn { text-align: center; }
+.dl .soon { opacity: 0.6; }
 footer { border-top: 1px solid var(--line); padding: 34px 0 50px; color: var(--fg-dim); font-size: 14px; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
 @media (max-width: 760px) {
@@ -126,7 +132,8 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
       <a href="#keeping">Proof of Keeping</a>
       <a href="#privacy">Privacy</a>
       <a href="#status">Status</a>
-      <a href="#start">Start</a>
+      <a href="#download">Download</a>
+      <a href="#start">Build</a>
     </nav>
     <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">Theme</button>
   </div>
@@ -140,7 +147,7 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
     files, anyone can search and read them, and the people who keep them safe are paid for it.
     No servers: every app is a relay, every byte travels over I2P, and a phone is a full participant.</p>
     <div class="cta">
-      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn primary" href="#download">Download</a>
       <a class="btn" href="https://github.com/x1watt/arca">Source on GitHub</a>
       <a class="btn" href="https://github.com/x1watt/arca/blob/main/arca-whitepaper.md">Read the whitepaper</a>
     </div>
@@ -302,9 +309,37 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space
   </div>
 </section>
 
+<section id="download">
+  <div class="wrap">
+    <h2>Download and try it</h2>
+    <p class="sub">No account, no setup: the app creates a profile and an I2P address on first launch. Join the test network from the wallet with one button (test marcas have no value).</p>
+    <div class="dl">
+      <div class="card">
+        <div class="os">Linux</div>
+        <div class="meta">x86-64, any recent distribution. Carries libmpv and ffmpeg, nothing to install.</div>
+        <a class="btn primary" href="https://github.com/x1watt/arca/releases/latest/download/arca-linux-x64.tar.gz">arca-linux-x64.tar.gz</a>
+        <div class="meta">Unpack and run <code>./arca</code>. To add it to the menu: <code>linux/packaging/install_desktop.sh</code> from the source.</div>
+      </div>
+      <div class="card">
+        <div class="os">Android</div>
+        <div class="meta">Android 7 or later. Most phones: arm64.</div>
+        <a class="btn primary" href="https://github.com/x1watt/arca/releases/latest/download/arca-android-arm64.apk">arca-android-arm64.apk</a>
+        <div class="meta">Older phones: <a href="https://github.com/x1watt/arca/releases/latest/download/arca-android-armv7.apk">armv7</a>. Emulators: <a href="https://github.com/x1watt/arca/releases/latest/download/arca-android-x86_64.apk">x86_64</a>. Allow installing from your browser when asked.</div>
+      </div>
+      <div class="card" id="dl-windows">
+        <div class="os">Windows</div>
+        <div class="meta">Windows 10 and 11, x64.</div>
+        <a class="btn primary" href="https://github.com/x1watt/arca/releases/latest/download/arca-windows-x64.zip">arca-windows-x64.zip</a>
+        <div class="meta">Unzip and run <code>arca\arca.exe</code>. Windows may ask to confirm an app from an unknown publisher (choose More info, Run anyway).</div>
+      </div>
+    </div>
+    <p style="margin-top:18px;color:var(--fg-dim);font-size:14px">All releases, checksums and the speech models: <a href="https://github.com/x1watt/arca/releases">github.com/x1watt/arca/releases</a>. Arca is a prototype: expect rough edges, and keep backups of files you care about.</p>
+  </div>
+</section>
+
 <section id="start">
   <div class="wrap">
-    <h2>Get started</h2>
+    <h2>Build from source</h2>
     <p class="sub">Build the app, open it, and you have a profile, an I2P address and a library. Join the test network from the wallet with one button.</p>
     <div class="two">
       <pre class="code">git clone --recursive https://github.com/x1watt/arca
