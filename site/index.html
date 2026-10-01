@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arca library</title>
+<meta name="description" content="Arca: a Wikipedia for files. A shared library anyone can add to, search and keep, paid by Proof of Keeping. No servers: every app is a relay, every byte travels over I2P.">
+<meta property="og:title" content="Arca: a Wikipedia for files">
+<meta property="og:description" content="A shared library anyone can add to, search and keep, paid by Proof of Keeping. No servers, I2P only, phones are full participants.">
+<link rel="icon" href="arca.svg" type="image/svg+xml">
+<style>
+:root {
+  --bg: #fbf8f3;
+  --bg-soft: #f3ece0;
+  --fg: #1d1a16;
+  --fg-dim: #5d554a;
+  --line: #e4d9c6;
+  --amber: #c9811c;
+  --amber-strong: #a8650b;
+  --amber-soft: #f6e6c9;
+  --ink: #1c1c1c;
+  --code-bg: #1c1c1c;
+  --code-fg: #f1e6d2;
+  --shadow: 0 1px 2px rgba(40, 28, 10, 0.06), 0 10px 28px rgba(40, 28, 10, 0.07);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131210; --bg-soft: #1b1916; --fg: #f1ebe0; --fg-dim: #b5ab9b;
+    --line: #2d2924; --amber: #e8a33d; --amber-strong: #f0b45a; --amber-soft: #2e2416;
+    --code-bg: #0c0b0a; --code-fg: #f1e6d2; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131210; --bg-soft: #1b1916; --fg: #f1ebe0; --fg-dim: #b5ab9b;
+  --line: #2d2924; --amber: #e8a33d; --amber-strong: #f0b45a; --amber-soft: #2e2416;
+  --code-bg: #0c0b0a; --code-fg: #f1e6d2; --shadow: none;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+}
+a { color: var(--amber-strong); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+code { font-size: 0.92em; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+header.top { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 20px; height: 58px; }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; color: var(--fg); }
+.logo img { width: 30px; height: 30px; }
+nav { display: flex; gap: 18px; margin-left: auto; flex-wrap: wrap; }
+nav a { color: var(--fg-dim); font-size: 14px; }
+nav a:hover { color: var(--fg); text-decoration: none; }
+.theme-btn { border: 1px solid var(--line); background: var(--bg-soft); color: var(--fg-dim); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+.hero { padding-top: 76px; padding-bottom: 56px; display: grid; grid-template-columns: 1.3fr 1fr; gap: 40px; align-items: center; }
+.hero h1 { font-size: clamp(36px, 6vw, 60px); line-height: 1.05; margin: 0 0 18px; letter-spacing: -0.02em; }
+.hero h1 em { font-style: normal; color: var(--amber); }
+.hero p.lead { font-size: clamp(17px, 2.1vw, 20px); color: var(--fg-dim); margin: 0 0 26px; }
+.hero .art { display: flex; justify-content: center; }
+.hero .art img { width: min(320px, 70vw); filter: drop-shadow(0 18px 40px rgba(160, 100, 20, 0.25)); }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { display: inline-block; padding: 10px 18px; border-radius: 10px; font-weight: 600; border: 1px solid var(--line); color: var(--fg); background: var(--bg-soft); }
+.btn.primary { background: var(--amber); border-color: var(--amber); color: #1c1306; }
+.btn:hover { text-decoration: none; filter: brightness(1.05); }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.pills span { border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; font-size: 13px; color: var(--fg-dim); background: var(--bg-soft); }
+section { padding: 60px 0; border-top: 1px solid var(--line); }
+section h2 { font-size: 32px; margin: 0 0 8px; letter-spacing: -0.01em; }
+section p.sub { color: var(--fg-dim); margin: 0 0 30px; max-width: 780px; font-size: 17px; }
+.grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid.three { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.card { border: 1px solid var(--line); border-radius: 16px; padding: 22px; background: var(--bg); box-shadow: var(--shadow); }
+.card h3 { margin: 0 0 8px; font-size: 19px; }
+.card p { margin: 0; color: var(--fg-dim); font-size: 15.5px; }
+.card ul { margin: 10px 0 0; padding-left: 18px; color: var(--fg-dim); font-size: 15px; }
+.num { display: inline-flex; width: 30px; height: 30px; border-radius: 9px; background: var(--amber-soft); color: var(--amber-strong); font-weight: 700; align-items: center; justify-content: center; margin-bottom: 12px; }
+.problem { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
+.problem div { padding: 18px 20px; border-left: 3px solid var(--amber); background: var(--bg-soft); border-radius: 0 12px 12px 0; }
+.problem strong { display: block; font-size: 17px; margin-bottom: 4px; }
+.problem span { color: var(--fg-dim); font-size: 15px; }
+.flow { border: 1px solid var(--line); border-radius: 16px; background: var(--bg-soft); padding: 20px; overflow-x: auto; }
+.flow svg { width: 100%; min-width: 760px; height: auto; display: block; }
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--bg-soft); font-weight: 600; }
+tr:last-child td { border-bottom: none; }
+td code, .card code { white-space: nowrap; }
+.ok { color: #2f8a4f; font-weight: 600; }
+.plan { color: var(--fg-dim); }
+.two { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); align-items: start; }
+pre.code { background: var(--code-bg); color: var(--code-fg); border-radius: 12px; padding: 16px 18px; overflow-x: auto; font-size: 14px; line-height: 1.6; margin: 0; }
+.curve { border: 1px solid var(--line); border-radius: 16px; padding: 20px; background: var(--bg); box-shadow: var(--shadow); }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding-top: 10px; }
+.bars div { flex: 1; background: var(--amber); border-radius: 5px 5px 0 0; position: relative; min-width: 14px; }
+.bars div.frozen { background: var(--fg-dim); opacity: 0.35; }
+.bars-labels { display: flex; gap: 6px; font-size: 12px; color: var(--fg-dim); margin-top: 6px; }
+.bars-labels span { flex: 1; text-align: center; min-width: 14px; }
+.split { display: flex; height: 36px; border-radius: 10px; overflow: hidden; font-size: 14px; font-weight: 600; margin: 8px 0 14px; }
+.split div { display: flex; align-items: center; justify-content: center; }
+.split .s { width: 30%; background: var(--amber-soft); color: var(--amber-strong); }
+.split .i { width: 70%; background: var(--amber); color: #1c1306; }
+footer { border-top: 1px solid var(--line); padding: 34px 0 50px; color: var(--fg-dim); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+@media (max-width: 760px) {
+  nav { display: none; }
+  .theme-btn { margin-left: auto; }
+  .hero { grid-template-columns: 1fr; padding-top: 44px; padding-bottom: 36px; text-align: center; }
+  .hero .cta, .hero .pills { justify-content: center; }
+  .hero .art { order: -1; }
+  .hero .art img { width: 150px; }
+  section { padding: 44px 0; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="logo" href="#"><img src="arca.svg" alt="">Arca</a>
+    <nav>
+      <a href="#why">Why</a>
+      <a href="#ideas">Ideas</a>
+      <a href="#how">How it works</a>
+      <a href="#keeping">Proof of Keeping</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#status">Status</a>
+      <a href="#start">Start</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Toggle dark mode">Theme</button>
+  </div>
+</header>
+
+<main>
+<div class="hero wrap">
+  <div>
+    <h1>A <em>Wikipedia</em> for files.</h1>
+    <p class="lead">Arca is a shared library that people everywhere build together. Anyone can add
+    files, anyone can search and read them, and the people who keep them safe are paid for it.
+    No servers: every app is a relay, every byte travels over I2P, and a phone is a full participant.</p>
+    <div class="cta">
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/x1watt/arca">Source on GitHub</a>
+      <a class="btn" href="https://github.com/x1watt/arca/blob/main/arca-whitepaper.md">Read the whitepaper</a>
+    </div>
+    <div class="pills"><span>Nostr</span><span>I2P only</span><span>Proof of Keeping</span><span>Private payments</span><span>Linux and Android</span></div>
+  </div>
+  <div class="art"><img src="arca.svg" alt="The Arca chest"></div>
+</div>
+
+<section id="why">
+  <div class="wrap">
+    <h2>Files vanish</h2>
+    <p class="sub">Radio archives, maps, books, recordings, manuals, family photos and community records live on single servers and personal drives. They disappear when one person stops paying or one service shuts down. Arca gives files what Wikipedia gave articles.</p>
+    <div class="problem">
+      <div><strong>One place to add them</strong><span>Anyone joins a circle and proposes files for its collections. Contributing is free.</span></div>
+      <div><strong>One way to find them</strong><span>Every circle publishes a catalog and a search index anyone can verify by recomputing a sample.</span></div>
+      <div><strong>Many hands keeping them</strong><span>People keep copies of the collections they care about, and are paid for keeping what others also want kept.</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="ideas">
+  <div class="wrap">
+    <h2>Six ideas at the heart of Arca</h2>
+    <p class="sub">Each one exists somewhere on its own. Arca is the first to put them together for files.</p>
+    <div class="grid">
+      <div class="card"><div class="num">1</div><h3>Proof of Keeping</h3><p>Mining is keeping files people chose to keep. Keepers prove every day that they still hold their copies and earn marcas for it. The more meaningful data people keep, the stronger the network.</p></div>
+      <div class="card"><div class="num">2</div><h3>Circles that curate, like Wikipedia</h3><p>Communities build collections together: anyone proposes, moderators accept, every version is signed. Members who dislike their moderators fork the circle with their disks the same day.</p></div>
+      <div class="card"><div class="num">3</div><h3>Every client is a relay</h3><p>Identities, comments, likes and edits are Nostr events. There are no relay servers: every Arca app stores and answers them itself, over I2P, so no server ever learns an IP address.</p></div>
+      <div class="card"><div class="num">4</div><h3>Phones are full participants</h3><p>The chain keeps state, not history. A phone follows headers, reads its balance with Merkle proofs and drops any block an honest node proves wrong with a few-KB fraud proof.</p></div>
+      <div class="card"><div class="num">5</div><h3>Private money, public keeping</h3><p>Payments hide amounts, payer and payee (Mimblewimble with stealth outputs). What earns stays public and auditable: anyone can check that no marca was ever made from nothing.</p></div>
+      <div class="card"><div class="num">6</div><h3>Files that carry their knowledge</h3><p>Each file's description and subtitles sit next to it as <code>Talk.arca.json</code> and <code>Talk.en.srt</code>. Subtitles are made on the device by whisper.cpp, so speech becomes searchable.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <h2>How a file lives in Arca</h2>
+    <p class="sub">From a proposal to a library that pays the people who keep it.</p>
+    <div class="flow">
+      <svg viewBox="0 0 1000 300" role="img" aria-label="Flow: a contributor proposes a file, moderators accept it into a collection, keepers keep and prove it, the chain pays the circle's pool, members are paid, readers download from keepers.">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+        </defs>
+        <g font-family="system-ui, sans-serif" font-size="15" fill="currentColor" style="color: var(--fg)">
+          <g stroke="var(--line)" stroke-width="1.5" fill="var(--bg)">
+            <rect x="10" y="40" width="160" height="70" rx="12"/>
+            <rect x="215" y="40" width="160" height="70" rx="12"/>
+            <rect x="420" y="40" width="160" height="70" rx="12"/>
+            <rect x="625" y="40" width="160" height="70" rx="12"/>
+            <rect x="830" y="40" width="160" height="70" rx="12"/>
+            <rect x="420" y="190" width="160" height="70" rx="12"/>
+            <rect x="625" y="190" width="160" height="70" rx="12"/>
+            <rect x="830" y="190" width="160" height="70" rx="12"/>
+          </g>
+          <g text-anchor="middle" font-weight="600">
+            <text x="90" y="72">Contributor</text>
+            <text x="295" y="72">Moderators</text>
+            <text x="500" y="72">Collection</text>
+            <text x="705" y="72">Keepers</text>
+            <text x="910" y="72">Global chain</text>
+            <text x="500" y="222">Readers</text>
+            <text x="705" y="222">Members</text>
+            <text x="910" y="222">Circle pool</text>
+          </g>
+          <g text-anchor="middle" font-size="12.5" fill="var(--fg-dim)">
+            <text x="90" y="94">proposes, for free</text>
+            <text x="295" y="94">review and accept</text>
+            <text x="500" y="94">a signed version</text>
+            <text x="705" y="94">pack, keep, prove daily</text>
+            <text x="910" y="94">Proof of Keeping</text>
+            <text x="500" y="244">allowance, pass, member</text>
+            <text x="705" y="244">paid by the policy</text>
+            <text x="910" y="244">marcas earned</text>
+          </g>
+          <g stroke="var(--amber)" stroke-width="2.5" fill="none" style="color: var(--amber)">
+            <line x1="172" y1="75" x2="211" y2="75" marker-end="url(#arr)"/>
+            <line x1="377" y1="75" x2="416" y2="75" marker-end="url(#arr)"/>
+            <line x1="582" y1="75" x2="621" y2="75" marker-end="url(#arr)"/>
+            <line x1="787" y1="75" x2="826" y2="75" marker-end="url(#arr)"/>
+            <line x1="910" y1="112" x2="910" y2="186" marker-end="url(#arr)"/>
+            <line x1="828" y1="225" x2="789" y2="225" marker-end="url(#arr)"/>
+            <path d="M705 112 Q 640 150 584 205" marker-end="url(#arr)"/>
+          </g>
+          <text x="660" y="168" font-size="12.5" fill="var(--fg-dim)" text-anchor="middle">serve downloads</text>
+        </g>
+      </svg>
+    </div>
+    <div class="tablewrap" style="margin-top:24px"><table>
+      <tr><th>Role</th><th>Does</th><th>Gets</th></tr>
+      <tr><td><strong>Reader</strong></td><td>browses, searches, downloads</td><td>a free daily allowance; a 24-hour pass for more</td></tr>
+      <tr><td><strong>Contributor</strong></td><td>proposes files, folders and descriptions</td><td>a share of the circle's pool if its policy says so</td></tr>
+      <tr><td><strong>Keeper</strong></td><td>keeps collections on disk, proves it daily, serves downloads</td><td>marcas through the pool, free access, pass revenue for bytes served</td></tr>
+      <tr><td><strong>Moderator</strong></td><td>reviews proposals, admits members, signs the circle's index</td><td>a share of the pool if the policy says so</td></tr>
+      <tr><td><strong>Circle</strong></td><td>curates collections under its own rules</td><td>marcas through its members' keeping, and trust shown in search</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section id="keeping">
+  <div class="wrap">
+    <h2>Proof of Keeping</h2>
+    <p class="sub">One coin, the marca, created only by the global chain on a fixed schedule. Its mining input is the keeping of data someone chose to keep. The rules are built so that faking it always costs more than doing it.</p>
+    <div class="two">
+      <div class="curve">
+        <h3 style="margin:0 0 6px">The replication curve</h3>
+        <p style="margin:0;color:var(--fg-dim);font-size:15px">Rewards for a piece of data rise with each keeper up to ten copies, then freeze and are split among all. The incentive: be one of the first ten keepers of something worth keeping.</p>
+        <div class="bars" aria-label="Total reward by number of copies: rising as n squared up to ten copies, then flat.">
+          <div style="height:1%"></div><div style="height:4%"></div><div style="height:9%"></div><div style="height:16%"></div><div style="height:25%"></div><div style="height:36%"></div><div style="height:49%"></div><div style="height:64%"></div><div style="height:81%"></div><div style="height:100%"></div><div class="frozen" style="height:100%"></div><div class="frozen" style="height:100%"></div><div class="frozen" style="height:100%"></div>
+        </div>
+        <div class="bars-labels"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span><span>11</span><span>12</span><span>13</span></div>
+        <p style="margin:8px 0 0;color:var(--fg-dim);font-size:13px">Total reward of a piece of data by number of copies (n squared over 100 of ten copies' worth, frozen from the eleventh).</p>
+      </div>
+      <div class="curve">
+        <h3 style="margin:0 0 6px">Two budgets each day</h3>
+        <div class="split"><div class="s">Storage 30%</div><div class="i">Interest 70%</div></div>
+        <ul style="margin:0;padding-left:18px;color:var(--fg-dim);font-size:15px">
+          <li><strong>Storage</strong> pays for bytes kept, deduplicated, so even rarely read archives are kept.</li>
+          <li><strong>Interest</strong> pays for what the wider library wants: keepers from other circles and paid reading, never free clicks.</li>
+          <li>Half of every pass is <strong>burned</strong>, so buying your own popularity always loses half.</li>
+          <li>Only a third of standing passes on, so rings of circles keeping each other's junk are capped at 1.5x honest earnings.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="grid three" style="margin-top:22px">
+      <div class="card"><h3>Every copy is unique</h3><p>Each chunk is stored XOR a memory-hard keystream of the keeper's key. Remaking a slice costs 1,355x reading it (measured, testnet), so one disk cannot pretend to be a hundred.</p></div>
+      <div class="card"><h3>Speed buys nothing</h3><p>A clock names random slices once a second; a faster disk reads no more of them. A Raspberry Pi with used disks competes.</p></div>
+      <div class="card"><h3>Caught within a day</h3><p>Each day names one random chunk per declared partition; a missed or wrong 2 KB proof drops everything the keeper had built up.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="wrap">
+    <h2>Private by construction</h2>
+    <p class="sub">Arca publishes what must be checked to be rewarded, and nothing that maps a person or a machine to a place or a time.</p>
+    <div class="grid three">
+      <div class="card"><h3>I2P only</h3><p>No clearnet path, no relay on the internet, no server that learns an address. The pure Dart I2P node runs inside the app.</p></div>
+      <div class="card"><h3>Separate profiles</h3><p>Each profile has its own key and I2P address; nothing links two profiles unless their owner does.</p></div>
+      <div class="card"><h3>Nothing that locates you</h3><p>Latency, throughput and serving limits never leave the device. Search history and opened files stay local.</p></div>
+      <div class="card"><h3>Private payments</h3><p>Pedersen commitments, Bulletproof range proofs and stealth outputs: amounts, payers and payees hidden; supply still auditable by anyone.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="wrap">
+    <h2>What works today</h2>
+    <p class="sub">A working prototype for Linux and Android, tested on the live I2P network and on a public test network of its own chain. Test marcas have no value.</p>
+    <div class="tablewrap"><table>
+      <tr><th>Area</th><th>Working now</th><th>Next</th></tr>
+      <tr><td>Profiles</td><td class="ok">Several per device, own key and I2P address, encrypted vaults, import and export</td><td class="plan">passphrases</td></tr>
+      <tr><td>Network</td><td class="ok">Embedded I2P node, one destination per profile, self-healing</td><td class="plan">per-destination tunnel pools</td></tr>
+      <tr><td>Collections</td><td class="ok">Create, edit, moderators, suggestions, follow and keep copies fetched over I2P</td><td class="plan">review queues, quotas</td></tr>
+      <tr><td>Media</td><td class="ok">Previews, playback, on-device subtitles (whisper.cpp)</td><td class="plan">text extraction, OCR</td></tr>
+      <tr><td>Search</td><td class="ok">Words in titles, paths, tags, descriptions; SHA-256 and SHA-1</td><td class="plan">full text, similarity (TLSH, PDQ), circle catalogs</td></tr>
+      <tr><td>Chain</td><td class="ok">Packing, mining, daily proofs, rewards, circles and anchors, payouts, passes, fraud proofs, light clients, private marcas</td><td class="plan">an always-on public seed</td></tr>
+    </table></div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2>Get started</h2>
+    <p class="sub">Build the app, open it, and you have a profile, an I2P address and a library. Join the test network from the wallet with one button.</p>
+    <div class="two">
+      <pre class="code">git clone --recursive https://github.com/x1watt/arca
+git clone https://github.com/x1watt/i2p-dart
+cd arca/app
+flutter build linux        # or: flutter build apk</pre>
+      <div class="card">
+        <h3>Then</h3>
+        <ul style="margin-top:0">
+          <li>Create a collection from a folder and describe your files.</li>
+          <li>Share your address so others follow, comment and suggest edits.</li>
+          <li>Keep a copy of a collection you care about.</li>
+          <li>Download a speech model for subtitles in Settings.</li>
+          <li>In the wallet: "Take part in the test network".</li>
+        </ul>
+      </div>
+    </div>
+    <p style="margin-top:22px;color:var(--fg-dim)">Read more: the <a href="https://github.com/x1watt/arca/blob/main/arca-whitepaper.md">whitepaper</a>, the <a href="https://github.com/x1watt/arca/blob/main/docs/architecture.md">architecture</a>, <a href="https://github.com/x1watt/arca/blob/main/docs/seed-node.md">running a seed node</a>, and the draft <a href="https://github.com/x1watt/arca/blob/main/docs/formats/web-archive.md">web archive format</a>.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Arca, BSD 3-clause, Copyright (c) 2026 Max Brito. Built on i2p-dart, Nostr, whisper.cpp and libmpv.</span>
+    <span><a href="https://github.com/x1watt/arca">GitHub</a> &middot; <a href="https://github.com/x1watt/arca/blob/main/arca-whitepaper.md">Whitepaper</a> &middot; <a href="https://x1watt.github.io/zx">zx</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var btn = document.getElementById('themeBtn');
+  var root = document.documentElement;
+  try { var saved = localStorage.getItem('arca-theme'); if (saved) root.setAttribute('data-theme', saved); } catch (e) {}
+  btn.addEventListener('click', function () {
+    var dark = root.getAttribute('data-theme') === 'dark' ||
+      (!root.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    var next = dark ? 'light' : 'dark';
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem('arca-theme', next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
