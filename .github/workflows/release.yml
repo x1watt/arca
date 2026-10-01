@@ -93,8 +93,11 @@ jobs:
           [System.Runtime.InteropServices.NativeLibrary]::GetExport($lib, 'arca_whisper_transcribe') | Out-Null
           $mpv = [System.Runtime.InteropServices.NativeLibrary]::Load("$PWD\libmpv-2.dll")
           [System.Runtime.InteropServices.NativeLibrary]::GetExport($mpv, 'mpv_create') | Out-Null
-          & .\bin\ffmpeg.exe -hide_banner -version | Select-Object -First 1
-          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg does not run' }
+          foreach ($t in 'ffmpeg', 'ffprobe') {
+            $v = & ".\bin\$t.exe" -hide_banner -version
+            if ($LASTEXITCODE -ne 0) { throw "$t does not run" }
+            $v[0]
+          }
           # The app starts and keeps running (data goes to a scratch
           # APPDATA so the runner's profile is left alone).
           $env:APPDATA = "$env:RUNNER_TEMP\appdata"
