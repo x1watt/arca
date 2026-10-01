@@ -1,0 +1,267 @@
+# Builds the downloadable apps and, for a v* tag, publishes them as a
+# GitHub release. The asset names are fixed: the web page links to
+# releases/latest/download/<name>.
+#
+#   arca-windows-x64.zip        Windows 10 and 11, x64 (folder arca\)
+#   arca-linux-x64.tar.gz       Linux x86-64 release bundle (folder arca/)
+#   arca-android-arm64.apk      Android, one APK per ABI
+#   arca-android-armv7.apk
+#   arca-android-x86_64.apk
+#   SHA256SUMS                  checksums of the above (release only)
+#
+# arca_core depends on ../i2p-dart (github.com/x1watt/i2p-dart), so the
+# repository is checked out into arca/ with i2p-dart beside it.
+#
+# Android signing: with the secrets ANDROID_KEYSTORE_BASE64,
+# ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD the
+# APKs are signed with that key; without them, with a debug key.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [windows-build]
+  workflow_dispatch:
+    inputs:
+      i2p_ref:
+        description: 'i2p-dart branch, tag or commit'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.5'
+  I2P_REF: ${{ inputs.i2p_ref || vars.I2P_REF || 'release-0.3.0' }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Static ffmpeg and ffprobe for video previews, pinned by version and
+      # SHA-256 (gyan.dev builds, mirrored as GitHub releases that are kept).
+      FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip
+      FFMPEG_SHA256: 60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Build
+        working-directory: arca/app
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          flutter build windows --release
+      - name: Add ffmpeg
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\ffmpeg.zip"
+          Invoke-WebRequest -Uri $env:FFMPEG_URL -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+          if ($hash -ne $env:FFMPEG_SHA256) { throw "ffmpeg checksum mismatch: $hash" }
+          Expand-Archive $zip -DestinationPath "$env:RUNNER_TEMP\ffmpeg"
+          $src = Get-ChildItem "$env:RUNNER_TEMP\ffmpeg" -Directory | Select-Object -First 1
+          $bin = "arca\app\build\windows\x64\runner\Release\bin"
+          New-Item -ItemType Directory -Force $bin | Out-Null
+          Copy-Item "$($src.FullName)\bin\ffmpeg.exe", "$($src.FullName)\bin\ffprobe.exe" $bin
+          Copy-Item "$($src.FullName)\LICENSE" "$bin\FFMPEG-LICENSE.txt"
+      - name: Smoke test
+        shell: pwsh
+        working-directory: arca/app/build/windows/x64/runner/Release
+        run: |
+          Get-ChildItem -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } |
+            ForEach-Object { '{0,12:N0}  {1}' -f $_.Length, $_.FullName.Substring($PWD.Path.Length + 1) }
+          foreach ($f in 'arca.exe', 'flutter_windows.dll', 'arca_whisper.dll', 'libmpv-2.dll', 'data\app.so', 'bin\ffmpeg.exe', 'bin\ffprobe.exe') {
+            if (-not (Test-Path $f)) { throw "missing from the bundle: $f" }
+          }
+          # The native libraries the core opens with dart:ffi load and
+          # export what it looks up.
+          $lib = [System.Runtime.InteropServices.NativeLibrary]::Load("$PWD\arca_whisper.dll")
+          [System.Runtime.InteropServices.NativeLibrary]::GetExport($lib, 'arca_whisper_transcribe') | Out-Null
+          $mpv = [System.Runtime.InteropServices.NativeLibrary]::Load("$PWD\libmpv-2.dll")
+          [System.Runtime.InteropServices.NativeLibrary]::GetExport($mpv, 'mpv_create') | Out-Null
+          foreach ($t in 'ffmpeg', 'ffprobe') {
+            $v = & ".\bin\$t.exe" -hide_banner -version
+            if ($LASTEXITCODE -ne 0) { throw "$t does not run" }
+            $v[0]
+          }
+          # The app starts and keeps running (data goes to a scratch
+          # APPDATA so the runner's profile is left alone).
+          $env:APPDATA = "$env:RUNNER_TEMP\appdata"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $p = Start-Process -FilePath .\arca.exe -PassThru
+          Start-Sleep -Seconds 25
+          if ($p.HasExited) { throw "arca.exe exited early with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          if (-not (Test-Path "$env:APPDATA\arca\device.json")) {
+            Get-ChildItem -Recurse "$env:APPDATA" | Select-Object -ExpandProperty FullName
+            throw 'arca.exe did not create its data folder'
+          }
+          Get-ChildItem "$env:APPDATA\arca" | Select-Object -ExpandProperty Name
+      - name: Package
+        shell: pwsh
+        run: |
+          $stage = "$env:RUNNER_TEMP\stage\arca"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item -Recurse "arca\app\build\windows\x64\runner\Release\*" $stage
+          Copy-Item arca\LICENSE, arca\NOTICE $stage
+          Compress-Archive -Path $stage -DestinationPath arca-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arca-windows-x64.zip
+          path: arca-windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - name: Install build tools and media libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev libmpv-dev libmpv2 ffmpeg patchelf
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Build
+        working-directory: arca/app
+        run: |
+          flutter pub get
+          flutter build linux --release
+      - name: Check the bundle
+        working-directory: arca/app/build/linux/x64/release/bundle
+        run: |
+          for f in arca lib/libapp.so lib/libarca_whisper.so lib/libmpv.so.2 bin/ffmpeg bin/ffprobe; do
+            test -e "$f" || { echo "missing from the bundle: $f"; exit 1; }
+          done
+          LD_LIBRARY_PATH= ldd lib/libmpv.so.2 bin/ffmpeg | grep 'not found' && exit 1 || true
+          bin/ffmpeg -hide_banner -version | head -1
+      - name: Package
+        run: |
+          mkdir -p stage
+          cp -a arca/app/build/linux/x64/release/bundle stage/arca
+          cp arca/LICENSE arca/NOTICE stage/arca/
+          tar -C stage -czf arca-linux-x64.tar.gz arca
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arca-linux-x64.tar.gz
+          path: arca-linux-x64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+          submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "No release key in the secrets: the APKs are signed with a debug key."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > arca/app/android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+      - name: Build
+        working-directory: arca/app
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
+      - name: Rename
+        run: |
+          out=arca/app/build/app/outputs/flutter-apk
+          ls -l "$out"
+          mkdir -p apks
+          cp "$out/app-arm64-v8a-release.apk" apks/arca-android-arm64.apk
+          cp "$out/app-armeabi-v7a-release.apk" apks/arca-android-armv7.apk
+          cp "$out/app-x86_64-release.apk" apks/arca-android-x86_64.apk
+          for a in apks/*.apk; do
+            unzip -l "$a" | grep -q 'lib/.*/libarca_whisper.so' || { echo "$a has no libarca_whisper.so"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arca-android-apks
+          path: apks/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          ls -l
+          sha256sum arca-windows-x64.zip arca-linux-x64.tar.gz arca-android-arm64.apk \
+            arca-android-armv7.apk arca-android-x86_64.apk > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        working-directory: dist
+        run: |
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Arca $TAG" --generate-notes --latest \
+            arca-windows-x64.zip arca-linux-x64.tar.gz arca-android-arm64.apk \
+            arca-android-armv7.apk arca-android-x86_64.apk SHA256SUMS

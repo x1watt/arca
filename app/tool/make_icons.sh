@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Renders Arca's icons from the SVGs in assets/icon for Android (launcher,
-# adaptive layers) and Linux (hicolor sizes). Needs ImageMagick.
+# adaptive layers), Linux (hicolor sizes) and Windows (app_icon.ico). Needs ImageMagick.
 # Run from app/: tool/make_icons.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -28,4 +28,12 @@ for s in 16 24 32 48 64 128 256 512; do
   render "$icon/arca.svg" "$s" "$out/arca-$s.png"
 done
 render "$icon/arca.svg" 512 "$icon/arca.png"
+
+# Windows: one .ico with the sizes Explorer and the taskbar use.
+ico=$(mktemp -d)
+for s in 16 24 32 48 64 128 256; do
+  render "$icon/arca.svg" "$s" "$ico/$s.png"
+done
+convert "$ico"/{16,24,32,48,64,128,256}.png windows/runner/resources/app_icon.ico
+rm -r "$ico"
 echo "icons written"

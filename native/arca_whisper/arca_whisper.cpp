@@ -244,7 +244,7 @@ std::string trim(const char* t) {
 
 }  // namespace
 
-extern "C" __attribute__((visibility("default"))) int32_t arca_whisper_transcribe(const char* model, const char* wav,
+extern "C" ARCA_WHISPER_API int32_t arca_whisper_transcribe(const char* model, const char* wav,
                                            const char* out_srt,
                                            const char* language,
                                            int32_t threads,

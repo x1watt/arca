@@ -243,7 +243,7 @@ class CoreService {
         if (e.kind == kindCollectionChange) s._background(s._foldIncoming(profileId));
       },
     );
-    s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? dataDir}/Arca');
+    s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? dataDir}/Arca');
     await s._loadSettings();
     for (final p in store.profiles) {
       if (await s._chainConfigFile(p.id).exists()) s._chainHas.add(p.id);

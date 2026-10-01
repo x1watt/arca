@@ -5,6 +5,18 @@
 
 #include <stdint.h>
 
+// Exported from the shared library: a DLL needs dllexport (dllimport for
+// its users), GCC and Clang a default visibility (the rest is hidden).
+#if defined(_WIN32)
+#if defined(ARCA_WHISPER_BUILD)
+#define ARCA_WHISPER_API __declspec(dllexport)
+#else
+#define ARCA_WHISPER_API __declspec(dllimport)
+#endif
+#else
+#define ARCA_WHISPER_API __attribute__((visibility("default")))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,7 +37,7 @@ enum {
 // used is written to [lang_out]. [progress] (0 to 100) and [cancel] are
 // shared with the caller, which reads the first and may set the second to
 // stop early. Blocks until done; call it from a worker thread or isolate.
-int32_t arca_whisper_transcribe(const char* model, const char* wav,
+ARCA_WHISPER_API int32_t arca_whisper_transcribe(const char* model, const char* wav,
                                 const char* out_srt, const char* language,
                                 int32_t threads, volatile int32_t* progress,
                                 volatile int32_t* cancel, char* lang_out,
