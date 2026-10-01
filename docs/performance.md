@@ -234,10 +234,10 @@ Private payments are paid for in elliptic-curve work, all in plain Dart on BigIn
 
 ### 3.21 Updates
 
-What an update costs (`docs/architecture.md` 11), mostly estimated from the parts already measured; the hash was timed:
+What an update costs (`docs/architecture.md` 11), the download and the hash measured, the rest estimated:
 
 - **Checking** is three queries to the meeting point plus one per person followed and per test network peer met (at most 32), each a byte, and an answer of a few KB from each device that holds a release, at most once every ten seconds per asker. Ninety seconds after start and every four hours.
-- **Downloading** uses the file service as it is (eight 24 KiB chunks in flight). At the 178 KB/s measured over live I2P (4.3), a 60 MB APK takes about six minutes and the Windows zip several times that; it runs in the background and continues after a break.
+- **Downloading** uses the file service as it is (eight 24 KiB chunks in flight). Measured over live I2P (`tool/live_update_check.dart`, two nodes on this desktop): the 36 MB arm64 APK of 0.1.1 in 236 s, 149 KB/s, found on the first check (30 s). At that rate the 115 MB Windows zip takes about 13 minutes; it runs in the background and continues after a break.
 - **Checking a file** is a streamed SHA-256 on the core isolate (`hashFile`), at the download's end, before unpacking and before handing an APK to the installer: 1.8 s for 100 MB on this desktop (measured with `dart run`, `hashFile` computes SHA-1 alongside), in chunks, so the core is never blocked for longer than one.
 - **Unpacking** runs `tar` as a child process, never in Dart.
 - **Disk:** one release at most in `updates/`, plus the unpacked copy beside the app and the previous app folder on a desktop. The seed holds all five downloads.
