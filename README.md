@@ -1,6 +1,6 @@
 # Arca
 
-**A Wikipedia for files.** Arca is a shared library that people
+**Wikipedia for files.** Arca is a shared library that people
 everywhere build together: anyone can add files, anyone can search and
 read them, and the people who keep them safe are paid for it. There are
 no servers: every app is a relay, every byte travels over I2P, and a
