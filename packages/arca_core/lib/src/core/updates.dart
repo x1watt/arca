@@ -128,7 +128,9 @@ extension _Updates on CoreService {
   /// A newer release was taken: the old one's state is dropped and the
   /// announcement goes into this device's relays, for anyone who asks.
   Future<void> _updateAdopted(Release r) async {
-    _updateProviders.clear();
+    // Sources are kept by SHA-256, so those already heard for this
+    // release's files stay; the old release's go.
+    _updateProviders.removeWhere((sha, _) => r.assetBySha(sha) == null);
     _upd.cancel = true;
     final fresh = _UpdateStatus()..lastCheck = _upd.lastCheck;
     _upd = fresh;

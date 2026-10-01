@@ -83,7 +83,8 @@ void main() {
       (((await c.handle('state', {}))['profiles'] as List).single as Map)['i2p'] as String;
 
   test('a seed serves a release; desktops and a phone find, fetch, check and stage it', () async {
-    final net = LoopbackNetwork();
+    // Messages arrive late and out of order, as over I2P tunnels.
+    final net = LoopbackNetwork(latency: const Duration(milliseconds: 40));
     final (path, event) = await releaseFolder('0.2.0+3');
     final seed = await open(net, 'seed', version: '0.2.0+3');
     final imported = await seed.handle('updateImport', {'path': path});

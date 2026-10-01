@@ -96,12 +96,14 @@ class UpdateStore {
   /// announcement and deletes the files of the older one. True when taken.
   Future<bool> adopt(Release r) async {
     if (!r.newerThan(release)) return false;
+    // Taken before the first await, so two answers that arrive together
+    // cannot both adopt.
+    release = r;
+    _held.clear();
     await Directory(dir).create(recursive: true);
     final tmp = File('${_eventFile.path}.tmp');
     await tmp.writeAsString(jsonEncode(r.event.toJson()), flush: true);
     await tmp.rename(_eventFile.path);
-    release = r;
-    _held.clear();
     // Every file of the old release goes, even one with the same name (its
     // bytes differ), and so do unfinished downloads.
     await for (final e in Directory(dir).list()) {
