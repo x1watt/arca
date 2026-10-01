@@ -404,11 +404,13 @@ class VideoState extends State<Video> with WidgetsBindingObserver {
                                     // before the video size is known; on
                                     // Linux the GL setup runs on its first
                                     // frame request, and mpv reports the
-                                    // size only after that.
+                                    // size only after that. Windows keeps
+                                    // upstream's behavior.
                                     if (id != null &&
                                         rect != null &&
                                         (_visible ||
-                                            (rect.width <= 1.0 &&
+                                            (!Platform.isWindows &&
+                                                rect.width <= 1.0 &&
                                                 rect.height <= 1.0))) {
                                       return SizedBox(
                                         // Apply aspect ratio if provided.

@@ -11,11 +11,12 @@ class VideoPreviews {
     : ffmpeg = ffmpeg ?? bundledTool('ffmpeg'),
       ffprobe = ffprobe ?? bundledTool('ffprobe');
 
-  /// `<app dir>/bin/<name>` when the app ships it (the Linux bundle does),
-  /// otherwise [name] for the system's PATH.
+  /// `<app dir>/bin/<name>` when the app ships it (the Linux bundle and the
+  /// Windows zip do, the latter as `<name>.exe`), otherwise [name] for the
+  /// system's PATH.
   static String bundledTool(String name) {
     final exe = File(Platform.resolvedExecutable).parent.path;
-    final shipped = File('$exe/bin/$name');
+    final shipped = Platform.isWindows ? File('$exe\\bin\\$name.exe') : File('$exe/bin/$name');
     return shipped.existsSync() ? shipped.path : name;
   }
 

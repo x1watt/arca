@@ -294,7 +294,7 @@ There is no choice of network: I2P is always the transport. The Network section 
 
 ## 6. Storage on the device
 
-Data directory: `~/.local/share/arca` on Linux, the app's files directory on Android.
+Data directory: `~/.local/share/arca` on Linux, `%APPDATA%\arca` on Windows, the app's files directory on Android.
 
 ```
 arca/
@@ -366,11 +366,11 @@ For each video the core makes a still frame (a tenth of the way in) and an anima
 
 ### 9.2 Playback
 
-Video and audio play through libmpv (`media_kit`). Android bundles it in the APK; the Linux bundle carries libmpv, ffmpeg and ffprobe with the libraries they need (`app/linux/packaging/bundle_media.sh`, run by the CMake install step), so nothing has to be installed on the system. Subtitles made on the device (9.3) are loaded as a subtitle track. On Linux, mpv renders into a GPU texture shared with Flutter through a patched copy of media_kit_video (`third_party/media_kit_video/ARCA.md`); without it, current Flutter made media_kit fall back to drawing every frame on the CPU. A click on the picture plays or pauses; the page starts playback when it opens.
+Video and audio play through libmpv (`media_kit`). Android bundles it in the APK; the Linux bundle carries libmpv, ffmpeg and ffprobe with the libraries they need (`app/linux/packaging/bundle_media.sh`, run by the CMake install step), so nothing has to be installed on the system. On Windows, media_kit_libs_windows_video puts `libmpv-2.dll` next to `arca.exe`, and the release workflow (`.github/workflows/release.yml`) adds a pinned static build of `ffmpeg.exe` and `ffprobe.exe` in `bin\`. Subtitles made on the device (9.3) are loaded as a subtitle track. On Linux, mpv renders into a GPU texture shared with Flutter through a patched copy of media_kit_video (`third_party/media_kit_video/ARCA.md`); without it, current Flutter made media_kit fall back to drawing every frame on the CPU. A click on the picture plays or pauses; the page starts playback when it opens.
 
 ### 9.3 Subtitles
 
-Subtitles are made from the speech in videos and audio with whisper.cpp, built from the `third_party/whisper.cpp` submodule into `libarca_whisper.so` behind a small C interface (`native/arca_whisper`), for Linux by the app's CMake build and for Android by Gradle's CMake build.
+Subtitles are made from the speech in videos and audio with whisper.cpp, built from the `third_party/whisper.cpp` submodule into `libarca_whisper.so` behind a small C interface (`native/arca_whisper`), for Linux and Windows (`arca_whisper.dll` next to `arca.exe`) by the app's CMake build and for Android by Gradle's CMake build.
 
 - **Decoding.** The audio track is decoded to 16 kHz mono WAV through libmpv, which the app already carries, so the same code works on Android, where there is no ffmpeg.
 - **Threads.** Decoding and recognition block their thread for minutes, so they run on a worker isolate the core spawns per file; the core reads progress from shared native memory and can stop the job. One file at a time, with half of the processors on a computer and at most four on a phone.

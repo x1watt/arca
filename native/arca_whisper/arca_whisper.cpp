@@ -244,7 +244,15 @@ std::string trim(const char* t) {
 
 }  // namespace
 
-extern "C" __attribute__((visibility("default"))) int32_t arca_whisper_transcribe(const char* model, const char* wav,
+// Exported from the shared library: MSVC needs dllexport, GCC and Clang a
+// default visibility (the rest of the library is hidden).
+#if defined(_WIN32)
+#define ARCA_WHISPER_EXPORT __declspec(dllexport)
+#else
+#define ARCA_WHISPER_EXPORT __attribute__((visibility("default")))
+#endif
+
+extern "C" ARCA_WHISPER_EXPORT int32_t arca_whisper_transcribe(const char* model, const char* wav,
                                            const char* out_srt,
                                            const char* language,
                                            int32_t threads,

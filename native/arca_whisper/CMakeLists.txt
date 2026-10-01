@@ -1,5 +1,6 @@
 # libarca_whisper: whisper.cpp and ggml linked statically behind the small C
-# interface in arca_whisper.h. Used by the Linux runner and the Android app.
+# interface in arca_whisper.h. Used by the Linux and Windows runners and the
+# Android app (libarca_whisper.so, or arca_whisper.dll on Windows).
 cmake_minimum_required(VERSION 3.14)
 project(arca_whisper C CXX)
 
@@ -8,8 +9,13 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Speech recognition is unusable without optimization, so build it
 # optimized even inside a debug build of the app.
-set(CMAKE_C_FLAGS_DEBUG "-O2 -g0")
-set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g0")
+if(MSVC)
+  set(CMAKE_C_FLAGS_DEBUG "/O2")
+  set(CMAKE_CXX_FLAGS_DEBUG "/O2")
+else()
+  set(CMAKE_C_FLAGS_DEBUG "-O2 -g0")
+  set(CMAKE_CXX_FLAGS_DEBUG "-O2 -g0")
+endif()
 
 # Portable CPU code: no -march=native, so the library runs on other
 # machines than the one that built it (on x86-64 this keeps AVX2 and FMA).
@@ -27,4 +33,8 @@ add_library(arca_whisper SHARED ${CMAKE_CURRENT_LIST_DIR}/arca_whisper.cpp)
 target_link_libraries(arca_whisper PRIVATE whisper)
 set_target_properties(arca_whisper PROPERTIES CXX_VISIBILITY_PRESET hidden)
 target_compile_definitions(arca_whisper PRIVATE ARCA_WHISPER_BUILD)
-target_link_options(arca_whisper PRIVATE -Wl,--exclude-libs,ALL)
+if(NOT MSVC)
+  # Keep whisper's and ggml's symbols out of the library's exports. A DLL
+  # exports only what is marked dllexport, so Windows needs nothing here.
+  target_link_options(arca_whisper PRIVATE -Wl,--exclude-libs,ALL)
+endif()

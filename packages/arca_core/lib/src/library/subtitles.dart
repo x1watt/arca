@@ -228,19 +228,31 @@ class SubtitleStore {
   }
 }
 
-/// Finds the native libraries: next to the app (Linux bundle `lib/`), in
-/// the APK (Android, by name), or where an environment variable says.
+/// Finds the native libraries: next to the app (Linux bundle `lib/`, or
+/// beside arca.exe on Windows), in the APK (Android, by name), or where an
+/// environment variable says.
 abstract final class NativeLibs {
-  static String get _appLib => '${File(Platform.resolvedExecutable).parent.path}/lib';
+  static String get _appDir => File(Platform.resolvedExecutable).parent.path;
+  static String get _appLib => '$_appDir/lib';
 
   static List<String> get whisper => [
     ?Platform.environment['ARCA_WHISPER_LIB'],
-    if (Platform.isAndroid) 'libarca_whisper.so' else '$_appLib/libarca_whisper.so',
+    if (Platform.isAndroid)
+      'libarca_whisper.so'
+    else if (Platform.isWindows)
+      '$_appDir\\arca_whisper.dll'
+    else
+      '$_appLib/libarca_whisper.so',
   ];
 
   static List<String> get mpv => [
     ?Platform.environment['LIBMPV_LIBRARY_PATH'],
-    if (Platform.isAndroid) 'libmpv.so' else ...['$_appLib/libmpv.so.2', 'libmpv.so.2', 'libmpv.so'],
+    if (Platform.isAndroid)
+      'libmpv.so'
+    else if (Platform.isWindows)
+      ...['$_appDir\\libmpv-2.dll', 'libmpv-2.dll']
+    else
+      ...['$_appLib/libmpv.so.2', 'libmpv.so.2', 'libmpv.so'],
   ];
 
   static DynamicLibrary? open(List<String> candidates) {

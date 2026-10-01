@@ -988,8 +988,8 @@ class Core {
   final _pending = <int, Completer<Map>>{};
   var _nextId = 1;
 
-  /// Where Arca keeps device data: ~/.local/share/arca on Linux, the app's
-  /// support folder elsewhere.
+  /// Where Arca keeps device data: ~/.local/share/arca on Linux,
+  /// %APPDATA%\arca on Windows, the app's support folder elsewhere.
   static Future<String> dataDir() async {
     if (Platform.isLinux) {
       final base =
@@ -997,6 +997,8 @@ class Core {
           '${Platform.environment['HOME']}/.local/share';
       return '$base/arca';
     }
+    final appData = Platform.isWindows ? Platform.environment['APPDATA'] : null;
+    if (appData != null && appData.isNotEmpty) return '$appData\\arca';
     return '${(await getApplicationSupportDirectory()).path}/arca';
   }
 
