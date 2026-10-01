@@ -48,6 +48,13 @@ Done: running totals in the `tally` namespace, one trace entry per settlement st
 - [ ] Time building and checking a payment on the C61.
 - [ ] Faster curve arithmetic if phones need it (fixed-width field elements instead of BigInt).
 
+## 6. Updates over I2P
+
+- [x] Releases announced by a kind 30790 event signed with the release key, signed in the release workflow; files spread over I2P from the seed and every device that has them; installed on the user's click (Android installer, staged swap on Windows and Linux); GitHub only as an explicit fallback (`docs/architecture.md` 11).
+- [ ] Try the Windows swap on a real desktop and the Android installer on the C61 with release builds.
+- [ ] Release key rotation: a new key announced by an event signed with the old one.
+- [ ] Serve the files of every platform from full nodes that offer the space, not only the seed.
+
 ## Later
 
 - Hiding which outputs a transaction spends (rings or a shielded pool), if needed.

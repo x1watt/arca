@@ -30,6 +30,10 @@ abstract final class Kind {
   /// A page of a collection's file list when it does not fit in the head
   /// (provisional): addressable, `d` = `<collection id>/<page number>`.
   static const arcaCollectionPage = 30781;
+
+  /// A release of Arca, signed by the release key: addressable,
+  /// `d` = `arca/release/<channel>` (docs/architecture.md, 11).
+  static const arcaRelease = 30790;
 }
 
 class NostrEvent {

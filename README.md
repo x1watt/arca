@@ -12,7 +12,7 @@ they vanish when one person stops paying or one service shuts down.
 Arca gives files what Wikipedia gave articles: one place to add them, one
 way to find them, and many hands keeping them.
 
-Status: a working prototype (version 0.1.0) for Linux, Windows and Android,
+Status: a working prototype (version 0.1.1) for Linux, Windows and Android,
 running on the live I2P network and on a public test network of its own
 chain. The design is in [arca-whitepaper.md](arca-whitepaper.md), the
 implementation in [docs/architecture.md](docs/architecture.md).
@@ -109,6 +109,7 @@ whisper.cpp, which make speech searchable; nothing leaves the device.
 | Media | Video stills and hover previews (ffmpeg), playback (libmpv), subtitles with whisper.cpp on the device | text extraction, OCR |
 | Search | By words in titles, paths, tags and descriptions; by SHA-256 or SHA-1 | full-text over subtitles and text layers, similarity (TLSH, PDQ), circle catalogs |
 | Chain | Corpus and packing, clock-limited mining, daily holding proofs, rewards with the replication curve and both budgets, circles with logs and anchors, pool payouts and claims, passes and serving rules, fraud proofs, light clients, private marcas | the seed on an always-on machine, faster curve arithmetic for phones |
+| Updates | Announced by an event signed with Arca's release key, fetched over I2P from the seed and from other devices, checked by SHA-256; installed on your click (Android installer, restart on Windows and Linux) | rotating the release key |
 | Test network | Built into the app: "Take part in the test network" in the wallet, nothing to type | a public-domain corpus on an always-on seed |
 
 The test network's marcas have no value.
@@ -153,6 +154,23 @@ Try it right away, no account and no setup:
 | Android 7+ | [arca-android-arm64.apk](https://github.com/x1watt/arca/releases/latest/download/arca-android-arm64.apk) (most phones), [armv7](https://github.com/x1watt/arca/releases/latest/download/arca-android-armv7.apk), [x86_64](https://github.com/x1watt/arca/releases/latest/download/arca-android-x86_64.apk) | open the APK, allow installing |
 
 Checksums are in `SHA256SUMS` on the [releases page](https://github.com/x1watt/arca/releases).
+
+**Updates come over I2P.** From 0.1.1 on, Arca finds new versions by
+itself: each release is announced by a Nostr event signed with Arca's
+release key, and the files travel over I2P from the seed and from every
+device that already has them, checked against the signed SHA-256. By
+default Arca downloads a new version in the background and asks before
+installing it: Android shows its installer, Windows and Linux restart into
+the new version and keep the previous folder as `arca.previous`. Settings,
+About has the version, what is new, and the choice between downloading by
+itself, only notifying, or off. When no device on I2P has an update,
+"Download from GitHub instead" is offered, on your click only, since it
+shows GitHub your IP address.
+
+**Android users of 0.1.0:** that version was signed with a temporary key,
+so Android cannot update it in place. Export your profile key (Settings,
+Profiles), uninstall 0.1.0 and install 0.1.1 once by hand; later versions
+install over it.
 The bundles carry libmpv, ffmpeg and the whisper library, so nothing else
 has to be installed. Arca is a prototype: expect rough edges, and the
 test network's marcas have no value. Windows is new: it is built and
@@ -222,9 +240,11 @@ seed node: see [docs/seed-node.md](docs/seed-node.md).
 ## Privacy principles
 
 - **I2P only.** No clearnet path, no WebSocket relay on the internet, no
-  server that learns anyone's address. The one exception is the speech
-  model download, a plain HTTPS download from GitHub that carries no
-  profile key or address.
+  server that learns anyone's address. Updates of Arca come over I2P too.
+  Two exceptions, each started only by your click and carrying no profile
+  key or address: the speech model download, and downloading an update
+  from GitHub when no device on I2P has it. Both are plain HTTPS from
+  GitHub and show GitHub your IP address.
 - **Profiles are separate accounts**, each with its own key and I2P
   address; nothing links two profiles unless their owner does. (Two
   profiles on one device go online together; the app says so.)
@@ -242,7 +262,8 @@ seed node: see [docs/seed-node.md](docs/seed-node.md).
   forwards actions; it never touches keys, sockets or files.
 - `packages/arca_core/`: the core in pure Dart, on its own isolate:
   `profiles` (keys, vaults), `nostr` and `relay` (events, the relay in
-  every client), `transport` (I2P, file transfer), `library`
+  every client), `transport` (I2P, file transfer), `update` (signed
+  releases, spread over I2P, and installing them), `library`
   (collections, manifests, previews, subtitles), `chain` (corpus,
   packing, mining, state, rewards, circles, passes, fraud proofs, light
   clients, wallets), `crypto` (Schnorr, Pedersen commitments,
@@ -273,6 +294,7 @@ Documents:
 - [docs/formats/web-archive.md](docs/formats/web-archive.md): a draft
   format for archiving websites as timelines.
 - [docs/TODO.md](docs/TODO.md): the work in order.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each version.
 
 ## Credits
 

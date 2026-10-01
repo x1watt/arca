@@ -26,6 +26,7 @@ class OnlineProfile {
     required this.store,
     this.policy,
     this.resolve,
+    this.unlimited,
   });
   final String id;
   final String pubkey;
@@ -39,6 +40,9 @@ class OnlineProfile {
 
   /// Files this profile shares, by SHA-256, for [BlobService].
   final Future<String?> Function(String sha256)? resolve;
+
+  /// Files served to everyone whatever the reading rules (updates).
+  final bool Function(String sha256)? unlimited;
 }
 
 enum NetState { off, starting, up, failed }
@@ -407,7 +411,12 @@ class NetworkManager {
         onChange?.call();
       },
     );
-    _blobs[p.id] = BlobService(address: address, link: backend.link, resolve: p.resolve ?? (_) async => null);
+    _blobs[p.id] = BlobService(
+      address: address,
+      link: backend.link,
+      resolve: p.resolve ?? (_) async => null,
+      unlimited: p.unlimited,
+    );
   }
 
   /// Until circles and collections exist, a profile's relay keeps its own

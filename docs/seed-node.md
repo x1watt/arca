@@ -29,7 +29,24 @@ Later runs take no files and continue the same network:
 
 The seed writes the network's spec to `~/arca-seed/spec.json` and prints a line a minute (height, day, peers, balance). The data directory holds the seed's key: back it up, since a seed that loses it can no longer act as the network's founder or its circle's admin.
 
+### Serving updates of Arca
+
+The seed is where new versions of Arca start spreading over I2P (`docs/architecture.md`, 11). Give it a release as the release workflow publishes it, the downloads with `release.json` beside them:
+
+    gh release download v0.1.1 -R x1watt/arca -D ~/arca-release/v0.1.1
+    ~/bin/arca-seed ~/arca-seed --release=$HOME/arca-release/v0.1.1/release.json
+
+It checks the announcement against the release key built into Arca and every file against its SHA-256, keeps them in `<data dir>/core/updates/`, keeps the announcement in its relay, answers at the updates meeting point and serves the files to every device that asks, whatever the test network's reading rules. It reads the file again every hour, so pointing it at the next release (or replacing the folder) is enough; the older release's files are deleted when a newer one is taken.
+
+Or, as an explicit choice for an operator's machine, from GitHub over HTTPS every six hours:
+
+    ~/bin/arca-seed ~/arca-seed --release-github
+
+This shows GitHub the seed's IP address; it is still I2P only towards everyone else. The seed prints a line when it serves a new release, and which files it could not get.
+
 ### As a service
+
+With `--release` below, `~/arca-release/current` is a link to the folder of the newest release (`ln -sfn v0.1.1 ~/arca-release/current`).
 
 `~/.config/systemd/user/arca-seed.service`:
 
@@ -38,7 +55,7 @@ The seed writes the network's spec to `~/arca-seed/spec.json` and prints a line 
     After=network-online.target
 
     [Service]
-    ExecStart=%h/bin/arca-seed %h/arca-seed
+    ExecStart=%h/bin/arca-seed %h/arca-seed --release=%h/arca-release/current/release.json
     Restart=always
     RestartSec=30
 

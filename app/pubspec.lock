@@ -7,7 +7,7 @@ packages:
       path: "../packages/arca_core"
       relative: true
     source: path
-    version: "0.1.0"
+    version: "0.1.1"
   archive:
     dependency: transitive
     description:

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The only files Arca shares with another app: downloaded updates, handed
+     to the system's package installer (docs/architecture.md, 11). The core
+     keeps its data in files/arca. -->
+<paths>
+    <files-path name="updates" path="arca/updates/" />
+</paths>

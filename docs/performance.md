@@ -232,6 +232,16 @@ Private payments are paid for in elliptic-curve work, all in plain Dart on BigIn
 - Scanning costs one multiplication per new output (a*R), then the one-byte view tag skips 255 in 256 before the key check. A light device first downloads the list of unspent outputs from a full node (about 150 bytes each), then proves the few it owns.
 - The supply checks add up every unspent output's commitment, one addition each, once a minute on full nodes.
 
+### 3.21 Updates
+
+What an update costs (`docs/architecture.md` 11), mostly estimated from the parts already measured; the hash was timed:
+
+- **Checking** is three queries to the meeting point plus one per person followed and per test network peer met (at most 32), each a byte, and an answer of a few KB from each device that holds a release, at most once every ten seconds per asker. Ninety seconds after start and every four hours.
+- **Downloading** uses the file service as it is (eight 24 KiB chunks in flight). At the 178 KB/s measured over live I2P (4.3), a 60 MB APK takes about six minutes and the Windows zip several times that; it runs in the background and continues after a break.
+- **Checking a file** is a streamed SHA-256 on the core isolate (`hashFile`), at the download's end, before unpacking and before handing an APK to the installer: 1.8 s for 100 MB on this desktop (measured with `dart run`, `hashFile` computes SHA-1 alongside), in chunks, so the core is never blocked for longer than one.
+- **Unpacking** runs `tar` as a child process, never in Dart.
+- **Disk:** one release at most in `updates/`, plus the unpacked copy beside the app and the previous app folder on a desktop. The seed holds all five downloads.
+
 ---
 
 ## 4. The heavy jobs and how they are run
@@ -253,6 +263,7 @@ whisper uses half of the processors on a computer (between 2 and 8) and at most 
 - Sidecar manifests are written to a temporary file and renamed, so a copy of the folder taken at any moment never holds half of one.
 
 - Files between clients (`transport/blobs.dart`) are served one 24 KiB chunk at a time from the file on disk and written by offset into a `.part` file; eight chunks are in flight, and a `.part.have` bitmap lets a download continue after a break instead of starting over. Over the live I2P network, three instances on this machine copied 115 KB in 1.1 s, and a 22.9 MB video in 128 s (about 178 KB/s).
+- Updates (`update/store.dart`, `update/https.dart`) are fetched like any file, into `.part` files, checked by SHA-256 and renamed into place; a file is checked again from disk before it is unpacked or installed.
 - Stores written from several places at once (`follows.json`, `synced.json`, `collections.json`) save one at a time: two writers sharing the temporary file made the second rename fail.
 - A profile's relay log is rewritten only when others' events are pruned to the space set in Settings: once an hour at most, one pass over the events in memory, on the core isolate but off any user's click.
 

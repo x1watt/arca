@@ -8,13 +8,22 @@
 #   arca-android-armv7.apk
 #   arca-android-x86_64.apk
 #   SHA256SUMS                  checksums of the above (release only)
+#   release.json                the release announcement, a Nostr event
+#                               signed with Arca's release key (release only)
+#
+# release.json is what spreads over I2P: devices check it against the
+# release key built into Arca and fetch the files above by SHA-256 from
+# each other (docs/architecture.md, 11). It is signed by
+# packages/arca_core/tool/sign_release.dart with the secret
+# ARCA_RELEASE_NSEC; the tag must match `version:` in app/pubspec.yaml.
 #
 # arca_core depends on ../i2p-dart (github.com/x1watt/i2p-dart), so the
 # repository is checked out into arca/ with i2p-dart beside it.
 #
 # Android signing: with the secrets ANDROID_KEYSTORE_BASE64,
 # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD the
-# APKs are signed with that key; without them, with a debug key.
+# APKs are signed with that key; without them, with a debug key. A tag
+# build refuses APKs not signed with Arca's release certificate.
 name: release
 
 on:
@@ -118,6 +127,41 @@ jobs:
           Copy-Item -Recurse "arca\app\build\windows\x64\runner\Release\*" $stage
           Copy-Item arca\LICENSE, arca\NOTICE $stage
           Compress-Archive -Path $stage -DestinationPath arca-windows-x64.zip
+      - name: Try the updater
+        shell: pwsh
+        run: |
+          # The swap script as the app writes it, run on the bundle just
+          # packed: the zip unpacked with tar.exe as the app does, a
+          # stand-in for the running Arca to wait for, then the swap and
+          # the restart from the new folder.
+          Push-Location arca\packages\arca_core
+          dart pub get
+          dart run tool/update_scripts.dart "$env:RUNNER_TEMP\upd"
+          Pop-Location
+          $root = "$env:RUNNER_TEMP\swap"
+          $app = "$root\arca"
+          New-Item -ItemType Directory -Force "$root\.arca-update" | Out-Null
+          Copy-Item -Recurse "$env:RUNNER_TEMP\stage\arca" $app
+          & "$env:SystemRoot\System32\tar.exe" -xf arca-windows-x64.zip -C "$root\.arca-update"
+          if ($LASTEXITCODE -ne 0) { throw 'tar.exe could not unpack the zip' }
+          foreach ($f in 'arca.exe', 'data\app.so') {
+            if (-not (Test-Path "$root\.arca-update\arca\$f")) { throw "the unpacked zip has no arca\$f" }
+          }
+          Set-Content "$root\.arca-update\arca\staged.txt" 'new'
+          $env:APPDATA = "$env:RUNNER_TEMP\appdata-swap"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          $running = Start-Process -FilePath powershell.exe -ArgumentList '-NoProfile', '-Command', 'Start-Sleep -Seconds 3' -PassThru
+          $log = "$env:RUNNER_TEMP\update.log"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\upd\arca-update.ps1" `
+            -ProcessId $running.Id -App $app -Staged "$root\.arca-update\arca" -Log $log
+          Get-Content $log
+          if (-not (Test-Path "$app\staged.txt")) { throw 'the new version is not in place' }
+          if (-not (Test-Path "$app.previous\arca.exe")) { throw 'the old version was not kept' }
+          if (Test-Path "$root\.arca-update") { throw 'the staging folder was left behind' }
+          Start-Sleep -Seconds 15
+          $started = Get-Process arca -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app\*" }
+          if (-not $started) { throw 'Arca was not started again from the new folder' }
+          $started | Stop-Process -Force
       - uses: actions/upload-artifact@v4
         with:
           name: arca-windows-x64.zip
@@ -138,6 +182,11 @@ jobs:
           repository: x1watt/i2p-dart
           ref: ${{ env.I2P_REF }}
           path: i2p-dart
+      - name: Version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          v=$(sed -n 's/^version: *\([0-9.]*\)+.*/\1/p' arca/app/pubspec.yaml)
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME does not match version $v in app/pubspec.yaml"; exit 1; }
       - name: Install build tools and media libraries
         run: |
           sudo apt-get update
@@ -230,6 +279,24 @@ jobs:
           for a in apks/*.apk; do
             unzip -l "$a" | grep -q 'lib/.*/libarca_whisper.so' || { echo "$a has no libarca_whisper.so"; exit 1; }
           done
+      - name: Check the signature
+        env:
+          HAS_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+          # SHA-256 of Arca's release certificate. Updates install over an
+          # older version only when both are signed with it.
+          EXPECTED: 4e9f8ac119c95857e14ee29de15aad0907a12e49eac00fd1dc151cf1785518cf
+        run: |
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$HAS_KEY" != true ]]; then
+            echo "A release needs the release key in the secrets."; exit 1
+          fi
+          for a in apks/*.apk; do
+            "$apksigner" verify --print-certs "$a" | tee certs.txt
+            got=$(grep -m1 'certificate SHA-256 digest' certs.txt | awk '{print $NF}')
+            if [ "$HAS_KEY" = true ] && [ "$got" != "$EXPECTED" ]; then
+              echo "$a is signed with $got, not with Arca's release certificate"; exit 1
+            fi
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: arca-android-apks
@@ -244,6 +311,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -255,12 +335,22 @@ jobs:
           sha256sum arca-windows-x64.zip arca-linux-x64.tar.gz arca-android-arm64.apk \
             arca-android-armv7.apk arca-android-x86_64.apk > SHA256SUMS
           cat SHA256SUMS
+      - name: Sign the release announcement
+        env:
+          ARCA_RELEASE_NSEC: ${{ secrets.ARCA_RELEASE_NSEC }}
+        working-directory: arca/packages/arca_core
+        run: |
+          dart pub get
+          dart run tool/sign_release.dart --dist="$GITHUB_WORKSPACE/dist" --tag="$GITHUB_REF_NAME" \
+            --notes-out="$GITHUB_WORKSPACE/notes.md"
+          cat "$GITHUB_WORKSPACE/notes.md"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         working-directory: dist
         run: |
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Arca $TAG" --generate-notes --latest \
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "Arca $TAG" \
+            --notes-file "$GITHUB_WORKSPACE/notes.md" --generate-notes --latest \
             arca-windows-x64.zip arca-linux-x64.tar.gz arca-android-arm64.apk \
-            arca-android-armv7.apk arca-android-x86_64.apk SHA256SUMS
+            arca-android-armv7.apk arca-android-x86_64.apk SHA256SUMS release.json

@@ -4,7 +4,8 @@
 // at the network's meeting point, and serves the circle log and the files
 // to whoever joins.
 //
-//   dart run tool/seed_node.dart <data dir> [--name=<collection>] <file>...
+//   dart run tool/seed_node.dart <data dir> [--name=<collection>]
+//     [--release=<release.json>] [--release-github] <file>...
 //
 // The first run creates the collection from the files and starts the test
 // network; later runs take no files and pick up where the last one stopped.
@@ -14,6 +15,14 @@
 // into a release (TestnetSpec._builtInCheckpoint): devices check the chain
 // they are shown from there and refuse any chain without it. SIGINT or
 // SIGTERM stops it cleanly.
+//
+// The seed also keeps and serves Arca's newest release over I2P
+// (docs/architecture.md, 11): --release names a release.json with the
+// downloads beside it (as the release workflow publishes them), read again
+// every hour; --release-github fetches the newest release.json and the
+// downloads from GitHub over HTTPS every six hours instead. That is an
+// explicit choice: a seed is an operator's machine, and the files are
+// checked against the release key built into Arca either way.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -30,9 +39,13 @@ Future<void> main(List<String> args) async {
   };
   final rest = args.where((a) => !a.startsWith('--')).toList();
   if (rest.isEmpty) {
-    stderr.writeln('usage: seed_node.dart <data dir> [--name=<collection>] <file>...');
+    stderr.writeln(
+      'usage: seed_node.dart <data dir> [--name=<collection>] [--release=<release.json>] [--release-github] <file>...',
+    );
     exit(64);
   }
+  final releaseFile = options['release'];
+  final releaseGithub = args.contains('--release-github');
   final dir = rest.first;
   final files = rest.skip(1).toList();
   final core = await CoreService.open(
@@ -40,6 +53,8 @@ Future<void> main(List<String> args) async {
     startNetwork: false,
     backend: I2pBackend('$dir/core/i2p'),
     defaultBaseFolder: '$dir/Arca',
+    // The seed is given its releases; it does not go looking for them.
+    updateChecks: false,
   );
 
   var stopping = false;
@@ -109,7 +124,20 @@ Future<void> main(List<String> args) async {
   // <data dir>/faucet ("<wallet address> <marcas>") are paid privately from
   // the founder's allocation: test marcas for whoever asks.
   final faucet = File('$dir/faucet');
+  DateTime? lastRelease;
   while (!stopping) {
+    final every = releaseGithub && releaseFile == null ? const Duration(hours: 6) : const Duration(hours: 1);
+    if ((releaseFile != null || releaseGithub) &&
+        (lastRelease == null || DateTime.now().difference(lastRelease) >= every)) {
+      lastRelease = DateTime.now();
+      final r = await core.handle('updateImport', {'path': ?releaseFile, 'github': releaseGithub});
+      if (r['error'] != null) {
+        say('release: ${r['error']}');
+      } else {
+        final missing = (r['missing'] as List).cast<String>();
+        say('release: serving Arca ${r['version']}, ${r['held']} files${missing.isEmpty ? '' : '; missing ${missing.join(', ')}'}');
+      }
+    }
     if (faucet.existsSync()) {
       final lines = faucet.readAsLinesSync().where((l) => l.trim().isNotEmpty).toList();
       faucet.deleteSync();

@@ -2,13 +2,12 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
 
-import 'package:package_info_plus/package_info_plus.dart';
-
 import '../core/core_client.dart';
 import 'wallet_screen.dart';
 import '../core/pickers.dart';
 import '../widgets/common.dart';
 import '../widgets/subtitles.dart';
+import '../widgets/update.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -463,19 +462,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onTap: () => _run(_core.clearSearches()),
               ),
 
+              // This version, newer ones and automatic updates.
               const SectionTitle('About'),
-              FutureBuilder(
-                future: PackageInfo.fromPlatform(),
-                builder: (context, info) => ListTile(
-                  leading: const Icon(Icons.info_outline),
-                  title: const Text('Arca'),
-                  subtitle: Text(
-                    info.hasData
-                        ? 'Version ${info.data!.version} (${info.data!.buildNumber})'
-                        : '',
-                  ),
-                ),
-              ),
+              UpdateSection(update: state.update),
             ],
           ),
         ),

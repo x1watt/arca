@@ -54,6 +54,7 @@ class BlobService {
     this.window = 8,
     this.chunkTimeout = const Duration(seconds: 20),
     this.rules,
+    this.unlimited,
   }) {
     _sub = link.incoming.where((m) => m.to == address && m.bytes.isNotEmpty).listen(_onInbound);
   }
@@ -78,6 +79,10 @@ class BlobService {
 
   /// Who may read how much; null serves everyone.
   ServingRules? rules;
+
+  /// Files served to everyone whatever the [rules] (updates of Arca, which
+  /// every reader should get, from whoever holds them).
+  final bool Function(String sha256)? unlimited;
 
   /// While true, this device answers no requests (the owner's sharing
   /// limits: only on Wi-Fi, only while charging); readers go elsewhere.
@@ -185,7 +190,7 @@ class BlobService {
       return;
     }
     final r = rules;
-    if (r == null) {
+    if (r == null || (unlimited?.call(sha) ?? false)) {
       unawaited(_serve(from, sha, offset, length));
       return;
     }
