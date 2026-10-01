@@ -268,6 +268,6 @@ capacity), and Mimblewimble (Grin, Beam, Litecoin's MWEB).
 
 ## License
 
-BSD 3-clause, Copyright (c) 2026 Max Brito. See [LICENSE](LICENSE), which
-also lists the third party code included (whisper.cpp and a patched
-media_kit_video, both MIT).
+BSD 3-clause, Copyright (c) 2026 Max Brito. See [LICENSE](LICENSE); the third
+party code included (whisper.cpp and a patched media_kit_video, both MIT)
+is listed in [NOTICE](NOTICE).

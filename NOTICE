@@ -1,0 +1,12 @@
+Third party code
+
+third_party/whisper.cpp (a git submodule) is whisper.cpp by Georgi Gerganov
+and contributors, MIT license (third_party/whisper.cpp/LICENSE).
+
+third_party/media_kit_video is a patched copy of media_kit_video by Hitesh
+Kumar Saini, MIT license (third_party/media_kit_video/LICENSE); the changes
+are described in third_party/media_kit_video/ARCA.md.
+
+The speech models downloaded by the app are unchanged copies of the
+quantized whisper.cpp models (ggerganov/whisper.cpp on Hugging Face), MIT
+license.
