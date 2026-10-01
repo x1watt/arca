@@ -12,7 +12,7 @@ they vanish when one person stops paying or one service shuts down.
 Arca gives files what Wikipedia gave articles: one place to add them, one
 way to find them, and many hands keeping them.
 
-Status: a working prototype (version 0.1.0) for Linux and Android,
+Status: a working prototype (version 0.1.0) for Linux, Windows and Android,
 running on the live I2P network and on a public test network of its own
 chain. The design is in [arca-whitepaper.md](arca-whitepaper.md), the
 implementation in [docs/architecture.md](docs/architecture.md).
@@ -141,6 +141,22 @@ The whitepaper explains the economics, the defences against abuse and
 the open problems: [arca-whitepaper.md](arca-whitepaper.md).
 
 ---
+
+## Download
+
+Try it right away, no account and no setup:
+
+| Platform | Download | Then |
+|---|---|---|
+| Windows 10/11 (x64) | [arca-windows-x64.zip](https://github.com/x1watt/arca/releases/latest/download/arca-windows-x64.zip) | unzip, run `arca\arca.exe` |
+| Linux (x86-64) | [arca-linux-x64.tar.gz](https://github.com/x1watt/arca/releases/latest/download/arca-linux-x64.tar.gz) | unpack, run `arca/arca` |
+| Android 7+ | [arca-android-arm64.apk](https://github.com/x1watt/arca/releases/latest/download/arca-android-arm64.apk) (most phones), [armv7](https://github.com/x1watt/arca/releases/latest/download/arca-android-armv7.apk), [x86_64](https://github.com/x1watt/arca/releases/latest/download/arca-android-x86_64.apk) | open the APK, allow installing |
+
+Checksums are in `SHA256SUMS` on the [releases page](https://github.com/x1watt/arca/releases).
+The bundles carry libmpv, ffmpeg and the whisper library, so nothing else
+has to be installed. Arca is a prototype: expect rough edges, and the
+test network's marcas have no value. Windows is new: it is built and
+smoke-tested in CI, not yet tried by hand on a Windows desktop.
 
 ## Getting started
 

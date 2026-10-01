@@ -20,7 +20,6 @@ name: release
 on:
   push:
     tags: ['v*']
-    branches: [windows-build]
   workflow_dispatch:
     inputs:
       i2p_ref:
