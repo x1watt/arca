@@ -22,3 +22,17 @@ export 'src/core/network.dart'
     show NetworkManager, NetworkBackend, I2pBackend, LoopbackBackend, OnlineProfile, NetState;
 export 'src/library/library.dart'
     show Commons, Library, Collection, LibraryFile, LibraryException, hashFile, detectMime;
+export 'src/update/release.dart'
+    show
+        AppVersion,
+        Release,
+        ReleaseAsset,
+        ReleaseException,
+        Target,
+        arcaVersion,
+        changelogSection,
+        currentTarget,
+        releaseAssetNames,
+        signRelease,
+        trustedReleaseKey;
+export 'src/update/install.dart' show unixSwapScript, windowsSwapScript;

@@ -31,12 +31,17 @@ import '../profiles/vault.dart';
 import '../relay/event_store.dart';
 import '../transport/link.dart' show Inbound;
 import '../transport/reading.dart';
+import '../update/https.dart';
+import '../update/install.dart';
+import '../update/release.dart';
+import '../update/store.dart';
 import 'network.dart';
 import 'social.dart';
 
 part 'chain.dart';
 part 'collaboration.dart';
 part 'personal.dart';
+part 'updates.dart';
 
 class CoreService {
   CoreService._(this._store, this.net, this._dataDir, this._defaultBase);
@@ -126,6 +131,29 @@ class CoreService {
   /// Reading sessions per profile, and profiles settling passes now.
   final _readers = <String, ReaderSession>{};
   final _settling = <String>{};
+
+  // Updates of Arca (updates.dart): the release key trusted, this
+  // version, the download this device needs, the folder the app runs
+  // from, and the state of the work.
+  String _releaseKey = trustedReleaseKey;
+  AppVersion _appVersion = AppVersion.current;
+  Target? _target = currentTarget();
+  Directory _appDir = runningAppDir();
+  bool _updateChecks = true;
+  late final UpdateStore _updates = UpdateStore('$_dataDir/updates', key: _releaseKey);
+
+  /// Automatic updates: 'download' (the default; installing still asks),
+  /// 'notify' or 'off'.
+  String _updateMode = 'download';
+  String? _updateMeeting;
+  bool _updateJoined = false;
+  var _upd = _UpdateStatus();
+  final _updateProviders = <String, Set<String>>{};
+  final _updateAnswered = <String, DateTime>{};
+  final _updateRefused = <String>{};
+  DateTime _updateListenUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  final _updateTimers = <Timer>[];
+  StreamSubscription<Inbound>? _updateInbound;
 
   /// The device's power and connection, as the UI last reported them.
   Map<String, Object?> _power = const {'charging': true, 'unmetered': true};
@@ -227,6 +255,11 @@ class CoreService {
     NetworkBackend? backend,
     bool startNetwork = true,
     String? defaultBaseFolder,
+    String releaseKey = trustedReleaseKey,
+    String? appVersion,
+    Target? updateTarget,
+    String? appDir,
+    bool updateChecks = true,
   }) async {
     final store = await ProfileStore.open(Directory(dataDir), cost: cost);
     await store.ensureProfile();
@@ -235,6 +268,7 @@ class CoreService {
       backend ?? I2pBackend('$dataDir/i2p'),
       onChange: () async {
         s._background(s._chainResumeAll());
+        s._updatesOnline();
         s._applySharing();
         s.onPush?.call(await s._state());
       },
@@ -244,7 +278,13 @@ class CoreService {
       },
     );
     s = CoreService._(store, manager, dataDir, defaultBaseFolder ?? '${Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'] ?? dataDir}/Arca');
+    s._releaseKey = releaseKey;
+    if (appVersion != null) s._appVersion = AppVersion.parse(appVersion);
+    if (updateTarget != null) s._target = updateTarget;
+    if (appDir != null) s._appDir = Directory(appDir);
+    s._updateChecks = updateChecks;
     await s._loadSettings();
+    await s._updatesOpen();
     for (final p in store.profiles) {
       if (await s._chainConfigFile(p.id).exists()) s._chainHas.add(p.id);
       await s._address(p.id);
@@ -274,6 +314,7 @@ class CoreService {
       if (m['sharing'] case final Map sharing) _sharing = {..._sharing, ...sharing.cast<String, Object?>()};
       _askFolder = m['askFolder'] as bool? ?? false;
       _noteSpace = m['noteSpace'] as int? ?? _noteSpace;
+      _updateMode = m['updates'] as String? ?? _updateMode;
     }
     if (_baseFolders.isEmpty) {
       _baseFolders = [_defaultBase];
@@ -291,6 +332,7 @@ class CoreService {
       'sharing': _sharing,
       'askFolder': _askFolder,
       'noteSpace': _noteSpace,
+      'updates': _updateMode,
     }),
   );
 
@@ -727,7 +769,9 @@ class CoreService {
       i2pSignSeed: Uint8List.fromList(secrets.i2pSignSeed),
       store: await _eventStore(p.id),
       policy: (e) => _rolePolicy(p.id, e),
-      resolve: (sha) => _resolveSha(p.id, sha),
+      // Files of Arca's newest release are served too, to everyone.
+      resolve: (sha) async => _updates.pathOf(sha) ?? await _resolveSha(p.id, sha),
+      unlimited: _updates.holds,
     );
     secrets.wipe();
     await net.setOnline(online);
@@ -849,6 +893,7 @@ class CoreService {
     'sharing': {..._sharing, 'allowed': _sharingAllowed},
     'askFolder': _askFolder,
     'noteSpace': _noteSpace,
+    'update': _updateState(),
   };
 
   /// Handles one request; returns the new state, a result, or an error.
@@ -864,6 +909,11 @@ class CoreService {
       }.contains(command)) {
         final error = await _personalCommand(command, args);
         if (error != null) return error;
+        return await _state();
+      }
+      if (command.startsWith('update')) {
+        final result = await _updateCommand(command, args);
+        if (result != null) return result;
         return await _state();
       }
       if (command.startsWith('chain')) {
@@ -1272,7 +1322,12 @@ class CoreService {
   Future<void> close() async {
     // Background passes (copies, folding) stop at their next step; wait
     // for them so nothing writes after close.
+    if (_closing) return;
     _closing = true;
+    for (final t in _updateTimers) {
+      t.cancel();
+    }
+    await _updateInbound?.cancel();
     await Future.wait(_tasks.toList()).timeout(const Duration(seconds: 30), onTimeout: () => const []);
     _minuteTimer?.cancel();
     await _chainStop();

@@ -2,11 +2,11 @@
 
 This document describes how the Arca client is built: identities and profiles, Nostr as the protocol for people and their messages, I2P as the only network, and how data is stored on the device. It is written before implementation and is the reference the code must follow. The economic and consensus design (marcas, Proof of Keeping, the global chain) is in `arca-whitepaper.md`; this document covers the client and its communication, and points to the whitepaper where the two meet.
 
-Status: implemented in `packages/arca_core` (pure Dart, tested) and wired into the app: BIP-340 keys and signatures, NIP-19, NIP-01 events, filters and relay messages, an event store, a relay and client over a message link, the profile store with encrypted vaults, and the network manager, all on a core isolate. The app creates a profile on first run; can create, import (nsec), rename, switch, export and delete profiles; starts an I2P node with `i2p-dart`; and puts the active profile and those set to stay online on the network, each with its own destination and relay. A rename publishes the profile as a kind 0 event in its own relay. Every profile starts in the built-in catch-all circle, Arca Commons; it can create collections (a new folder under the default storage folder, or an existing folder), add files and folders (copied in, hashed with SHA-256 and SHA-1, type detected from content), edit titles, descriptions and tags, and comment on files and collections. Each collection is published as an addressable event (provisional kind 30780) and each comment as a kind 1111 event in the profile's relay. Verified end to end on the live I2P network (`packages/arca_core/tool/live_i2p_check.dart`): one profile fetched another's signed kind 0 through real tunnels. Until circles exist, a profile's relay only keeps its own events and events that tag it. Videos get a still preview and an animated hover preview made with ffmpeg run from the core isolate, and play in the app through libmpv (media_kit). Both ship with the app: Android bundles libmpv, and the Linux bundle carries libmpv, ffmpeg and ffprobe with their libraries (app/linux/packaging/bundle_media.sh, run by the CMake install step), so nothing has to be installed on the system. A profile can follow someone by Arca address (`arca:npub...@....b32.i2p`), fetch their profile and collection events from their relay over I2P, and suggest title, description and tag changes to their files: the suggestion is a signed event (provisional kind 4781, tagged with the owner, the collection and the file hash) delivered to the owner's relay; the owner accepts or rejects it, which republishes the collection and publishes a kind 7 reaction (+ or -) the suggester can read back. Verified end to end with two instances on the live I2P network. Collections can have moderators, whose signed changes are folded into the admin's collection; others' changes are refused; followers can keep a copy, fetched in chunks over I2P (4.7, 5.7). Subtitles are made on the device with whisper.cpp from a speech model downloaded on demand (9.3). The UI shows only real data. A profile can take part in the test network of the global chain built into the app, found over I2P with nothing typed in, keep and prove its files, and send, receive and claim test marcas in the wallet (section 10). Not yet: creating circles in the app, circle relays, and Blossom.
+Status: implemented in `packages/arca_core` (pure Dart, tested) and wired into the app: BIP-340 keys and signatures, NIP-19, NIP-01 events, filters and relay messages, an event store, a relay and client over a message link, the profile store with encrypted vaults, and the network manager, all on a core isolate. The app creates a profile on first run; can create, import (nsec), rename, switch, export and delete profiles; starts an I2P node with `i2p-dart`; and puts the active profile and those set to stay online on the network, each with its own destination and relay. A rename publishes the profile as a kind 0 event in its own relay. Every profile starts in the built-in catch-all circle, Arca Commons; it can create collections (a new folder under the default storage folder, or an existing folder), add files and folders (copied in, hashed with SHA-256 and SHA-1, type detected from content), edit titles, descriptions and tags, and comment on files and collections. Each collection is published as an addressable event (provisional kind 30780) and each comment as a kind 1111 event in the profile's relay. Verified end to end on the live I2P network (`packages/arca_core/tool/live_i2p_check.dart`): one profile fetched another's signed kind 0 through real tunnels. Until circles exist, a profile's relay only keeps its own events and events that tag it. Videos get a still preview and an animated hover preview made with ffmpeg run from the core isolate, and play in the app through libmpv (media_kit). Both ship with the app: Android bundles libmpv, and the Linux bundle carries libmpv, ffmpeg and ffprobe with their libraries (app/linux/packaging/bundle_media.sh, run by the CMake install step), so nothing has to be installed on the system. A profile can follow someone by Arca address (`arca:npub...@....b32.i2p`), fetch their profile and collection events from their relay over I2P, and suggest title, description and tag changes to their files: the suggestion is a signed event (provisional kind 4781, tagged with the owner, the collection and the file hash) delivered to the owner's relay; the owner accepts or rejects it, which republishes the collection and publishes a kind 7 reaction (+ or -) the suggester can read back. Verified end to end with two instances on the live I2P network. Collections can have moderators, whose signed changes are folded into the admin's collection; others' changes are refused; followers can keep a copy, fetched in chunks over I2P (4.7, 5.7). Subtitles are made on the device with whisper.cpp from a speech model downloaded on demand (9.3). The UI shows only real data. A profile can take part in the test network of the global chain built into the app, found over I2P with nothing typed in, keep and prove its files, and send, receive and claim test marcas in the wallet (section 10). Arca updates itself over I2P: releases are announced by an event signed with the release key, and their files travel from device to device (section 11). Not yet: creating circles in the app, circle relays, and Blossom.
 
 ## 1. Principles
 
-1. **I2P only.** Every byte between two Arca clients travels over I2P. There is no clearnet path, no WebSocket relay on the internet and no server that learns anyone's IP address. The pure-Dart I2P node in `../i2p-dart` is the transport.
+1. **I2P only.** Every byte between two Arca clients travels over I2P. There is no clearnet path, no WebSocket relay on the internet and no server that learns anyone's IP address. The pure-Dart I2P node in `../i2p-dart` is the transport. Updates of Arca itself travel over I2P too (11). Two downloads are plain HTTPS from GitHub, each started only by the user's click and carrying no profile key or address: a speech model (9.3), and an update when no device on I2P has it (11.4).
 2. **Nostr for people.** Identities, profiles, comments, likes, replies, follows, moderation and settings that others must see are Nostr events (NIP-01), signed with the profile's key. We use existing NIPs wherever one fits and define Arca kinds only where none does.
 3. **Every client is a relay.** Each client stores events and answers Nostr requests from other clients, over I2P. There are no dedicated relay servers; a well-connected client with a lot of storage is simply a bigger relay.
 4. **Authors keep their own data, circles keep it available.** Every event a profile creates is kept by that profile's client, and copies go to whoever owns the thing it is about and to the relays of the author's circles. Phones and laptops are often off; a circle's always-on machines (circle relays, 4.5) are where others find a member's notes when the member is offline.
@@ -115,7 +115,12 @@ External identifiers (NIP-73 `i` tags) for Arca items:
 - a collection: `arca:collection:<owner pubkey hex>:<collection id>`;
 - a circle: `arca:circle:<circle id>`.
 
-Arca kinds, to be allocated when the protocol is fixed: the collection head (an addressable event by the owner pointing to the current tree root, its circle and its settings), catalog announcements, and circle log entries. The whitepaper's circle log is a natural fit for moderator-signed Nostr events; that decision belongs to the chain design and is left open here.
+Arca kinds in use:
+
+- **Kind 30780**, collection head, and **kind 30781**, a page of its file list (provisional, 4.7).
+- **Kind 30790, release of Arca** (11.1): addressable, `d` = `arca/release/<channel>` (`stable` for now), signed by the release key built into the app. Relays keep the newest one and give it to anyone who asks.
+
+Arca kinds still to be allocated when the protocol is fixed: the collection head (an addressable event by the owner pointing to the current tree root, its circle and its settings), catalog announcements, and circle log entries. The whitepaper's circle log is a natural fit for moderator-signed Nostr events; that decision belongs to the chain design and is left open here.
 
 ### 4.2 Every client is a relay
 
@@ -307,6 +312,9 @@ arca/
   previews/            video stills and hover GIFs by SHA-256 (9.1)
   subtitles/           work files of the subtitle maker and notes on files it could not do (9.3)
   models/              downloaded speech models (9.3)
+  updates/             the newest release announcement (release.json), the files
+                       of it this device holds and serves, unfinished downloads,
+                       and the swap script and its log (11)
   profiles/
     <profile id>/
       vault.bin        encrypted nsec and I2P destination seeds
@@ -329,7 +337,7 @@ All of it is read and written by the core isolate, never the UI isolate. Lists t
 ## 7. Isolates and threads
 
 - **UI isolate**: Flutter only.
-- **Core isolate**: profiles, vaults in memory, event signing and verification, the relay and its databases, the outbox, collection and circle logic.
+- **Core isolate**: profiles, vaults in memory, event signing and verification, the relay and its databases, the outbox, collection and circle logic, and updates (11): announcements, downloads, hashing and unpacking (`tar` in a child process).
 - **I2P isolate**: the `i2p-dart` worker.
 - **Chain isolate** (`chain/worker.dart`): the chain nodes of the profiles that take part in a test network, their packed partitions and the founder's circle log. Checking blocks and proofs costs an Argon2id each, so none of it runs on the core. The core forwards chain messages between it and the network, keeps the last state it reported for the UI, and signs for it: the chain asks the core for each signature (`chain/signer.dart`), so no secret key leaves the core isolate. Packing a partition and building the corpus run on isolates of their own, started by the chain isolate.
 - **Worker pool**: hashing (SHA-256, fingerprints), packing and file indexing, spawned as needed and bounded by the power settings.
@@ -398,7 +406,7 @@ Talk.en.srt            subtitles, one file per language
 - **Carried along.** Adding a file copies its manifest and subtitles with it, renamed with it when the name changes. Removing a file from disk removes its sidecars. Scanning a folder does not list sidecars as files of their own; a `.srt` with no file of the same name beside it is an ordinary file.
 - `collections.json` in the profile stays the fast index of the library; the files beside the files are what travels.
 
-The model download is the one connection that does not go over I2P: a plain HTTPS download from GitHub, started by the user, carrying no profile key or address. It reveals to GitHub that this IP downloaded a speech model, nothing about the profile.
+The model download is one of the two connections that do not go over I2P: a plain HTTPS download from GitHub, started by the user, carrying no profile key or address. It reveals to GitHub that this IP downloaded a speech model, nothing about the profile. The other is the update fallback (11.4), also started only by the user.
 
 ## 10. The global chain (in progress)
 
@@ -514,7 +522,47 @@ Built so far (milestones 1 to 5):
 
 Next: the phone as a light client in the app, the serving rules in the core, and the open problems below.
 
-## 11. Open questions
+## 11. Updates
+
+Arca updates itself without leaving I2P. A new version is announced as a Nostr event signed by a dedicated release key; the files travel over I2P from the seed and from every device that already has them, and are checked against the SHA-256 in the signed announcement, whoever served them. Code: `packages/arca_core/lib/src/update/` (announcement, folder, installer, HTTPS fallback) and `lib/src/core/updates.dart` (the core's side); the app's side is `app/lib/widgets/update.dart` and, on Android, `MainActivity.kt`.
+
+### 11.1 The release key and the announcement
+
+- **Release key.** A BIP-340 key pair made with the core's own key code (`tool/release_key.dart`). Its public key is built into the app (`trustedReleaseKey`, `lib/src/update/release.dart`); its secret is kept off line by the maintainer and in the repository's secrets (`ARCA_RELEASE_NSEC`), and is used only by the release workflow. It signs nothing else.
+- **Announcement.** A kind 30790 event, `d` = `arca/release/stable`, with a `version` tag and an `x` tag per file. Its content is JSON: `version` (`0.1.1`), `build` (`2`), `date`, `tag` (`v0.1.1`), `notes` (the version's section of `CHANGELOG.md`, at most 6,000 characters so an answer fits one I2P message) and `assets`, one per download: `name`, `os`, `arch`, `size`, `sha256` and `content` (`arca:sha256:<hex>`, the file's address in Arca's file service, 5.7).
+- **Checked before anything is kept.** Kind, author (the built-in key only), channel, id and signature, a version that parses and matches its tag, file names of the fixed form `arca-<platform>...` (no paths) whose platform matches the name, sizes and hashes that are well formed. Anything else is dropped as a whole.
+- **Newer only.** A device keeps the newest announcement it has checked: a higher version, or the same version announced later. It offers to move only to a version above its own (`arcaVersion`, which a test keeps equal to `version:` in `app/pubspec.yaml`), and the installers refuse anything else, so nothing ever goes back.
+- **Made by the release workflow.** On a `v*` tag, `.github/workflows/release.yml` builds the five downloads, checks the tag against the pubspec, and `tool/sign_release.dart` signs the announcement with `ARCA_RELEASE_NSEC` (refusing a key other than the built-in one). `release.json` is published with the downloads and `SHA256SUMS`.
+- **Rotating the key (planned).** A new release key will be announced by an event signed with the old one, naming the new public key, which installed copies then trust instead. Until that exists, the key cannot change without a manual reinstall, so its secret is kept off line.
+
+### 11.2 Finding releases and spreading the files
+
+- **Asking.** Two binary messages on the same link as Nostr and files: `QUERY` (`0xB1`) and `ANSWER` (`0xB2` and JSON: the newest announcement the device holds and which of its files it has). A device answers each asker at most once every ten seconds.
+- **Who is asked.** The **updates meeting point**, an I2P address made from the release key (`updateMeetingSeeds`) that every device holding files of the newest release answers for, as full nodes do for a test network's meeting point (10); each query there reaches one of them, so it is sent three times. Also the people the active profile follows and the test network's full nodes the device met. Answers come back from the answering device's own profile address, which is then a source for the files it named.
+- **When.** Ninety seconds after the network first comes up and every four hours after, unless automatic updates are off; and when the user presses "Check now".
+- **Fetching.** The file for this device (`currentTarget`: Windows x64, Linux x64, or Android arm64, armv7 or x86_64) is fetched by SHA-256 with the file service (5.7): eight chunks in flight, continued after a break, renamed into `updates/` only when its SHA-256 matches. A device that answers with wrong bytes wastes a download, nothing more.
+- **Serving.** Every device serves the files of the newest release it holds, under each of its online profiles, to everyone: reading rules (5.7) do not limit them. Once it holds one, it answers at the meeting point too. So an update spreads from the seed to the first devices and from them onwards. The seed holds the files for every platform; other devices hold the one they downloaded.
+- **Bounded.** `updates/` holds one release: when a newer one is taken, every file of the older one is deleted, along with unfinished downloads.
+- **The seed** (`tool/seed_node.dart --release=<release.json>`) imports a release from a folder as the workflow publishes it, checks every file and serves them; with `--release-github`, an explicit choice for an operator's machine, it fetches the newest `release.json` and the files from GitHub. It keeps the announcement in its relay, where any Nostr client can ask for it (`docs/seed-node.md`).
+
+### 11.3 Installing
+
+Downloading may happen by itself; installing never does.
+
+- **Settings.** Automatic updates: download automatically (the default), notify only, or off. A banner above the app says "Arca X.Y.Z is available"; Settings, About shows this version, the new one with its notes and size, the download's progress and the button that installs it.
+- **Android.** The core checks the APK's SHA-256 again and the app hands it to the system's package installer through a `FileProvider` (`REQUEST_INSTALL_PACKAGES`; Android first asks once whether Arca may install apps). The user confirms in the system's screen. The APK is signed with Arca's release certificate, so it replaces the installed app and keeps its data. Version 0.1.0 was signed with a temporary key: Android refuses to update it in place, so it must be uninstalled once.
+- **Windows and Linux.** When the app runs from a release bundle whose folder can be written, the core checks the archive again and unpacks it beside the app (`<parent>/.arca-update/arca`, with `tar`; on Windows the system's `tar.exe`, or `Expand-Archive`), and checks that it holds an Arca bundle. "Restart to update" writes a small script (`arca-update.sh` or `arca-update.ps1` in `updates/`) and starts it detached; the core closes and the app exits. The script waits for the process to end, moves the app folder aside as `<app>.previous`, moves the new one in (and puts the old one back if that fails), and starts Arca from it. The previous folder stays for going back by hand; the next update replaces it.
+- **Installed for all users.** An app folder that cannot be written is not touched: Arca says where the downloaded file is and opens its folder.
+
+### 11.4 GitHub as an explicit fallback
+
+When no device on I2P has the update, or the download over I2P fails, Settings offers "Download from GitHub instead", explaining that GitHub then learns this IP address downloaded Arca. Only the user's click starts it. It fetches the same file from the GitHub release named in the announcement, continued after a break, and keeps it only when it matches the signed SHA-256, so GitHub cannot change it either. Like the speech models (9.3), it carries no profile key or address.
+
+### 11.5 What is verified where
+
+Tested in `test/update_test.dart` (versions, announcements and what is refused, the updates folder, unpacking, and the Linux swap script run for real on throwaway folders) and `test/update_network_test.dart` (on an in-process network: a seed imports a release, a desktop on an older version finds it at the meeting point, downloads, checks and stages it; a second desktop gets it from the first while the seed is away; a phone gets its APK; "notify only" downloads nothing; a newer device sees nothing to install; a device answering with a release signed by another key or with wrong bytes gets nowhere). The release workflow runs the Windows script on the real bundle (unpacked with `tar.exe`, swapped, restarted from the new folder) and checks that every APK is signed with the release certificate. Not yet tried by hand: the swap on a Windows desktop and the Android installer on a phone with the release build.
+
+## 12. Open questions
 
 - Exact Arca event kinds and their tags (collection head, catalog announcements, circle log entries).
 - Port numbers and the control protocol's message set.

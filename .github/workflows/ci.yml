@@ -1,0 +1,70 @@
+# Checks every push to a branch and every pull request: the core's analysis
+# and tests (in-process networks, no I2P), and the app's analysis. The
+# downloadable apps are built by release.yml.
+#
+# arca_core depends on ../i2p-dart (github.com/x1watt/i2p-dart), so the
+# repository is checked out into arca/ with i2p-dart beside it.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FLUTTER_VERSION: '3.47.5'
+  I2P_REF: ${{ vars.I2P_REF || 'release-0.3.0' }}
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Analyze
+        working-directory: arca/packages/arca_core
+        run: |
+          dart pub get
+          dart analyze --fatal-infos
+      - name: Test
+        working-directory: arca/packages/arca_core
+        run: dart test -j 2 -r expanded
+
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: arca
+      - uses: actions/checkout@v4
+        with:
+          repository: x1watt/i2p-dart
+          ref: ${{ env.I2P_REF }}
+          path: i2p-dart
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Analyze
+        working-directory: arca/app
+        run: |
+          flutter pub get
+          flutter analyze

@@ -870,6 +870,110 @@ class SharingView {
         );
 }
 
+/// A newer version of Arca this device knows of (docs/architecture.md, 11).
+class UpdateOffer {
+  const UpdateOffer({
+    required this.version,
+    required this.date,
+    required this.notes,
+    required this.name,
+    required this.size,
+    required this.githubUrl,
+    required this.peers,
+    required this.held,
+    this.install,
+    this.path,
+  });
+  final String version, date, notes, name, githubUrl;
+  final int size, peers;
+
+  /// The file is here and checked.
+  final bool held;
+
+  /// How it installs once held: 'apk', 'restart' (unpacked beside the
+  /// app) or 'folder' (shown to the user); null while not ready.
+  final String? install;
+  final String? path;
+
+  static UpdateOffer? fromMap(Map? m) => m == null
+      ? null
+      : UpdateOffer(
+          version: m['version'] as String,
+          date: m['date'] as String? ?? '',
+          notes: m['notes'] as String? ?? '',
+          name: m['name'] as String,
+          size: m['size'] as int,
+          githubUrl: m['github'] as String? ?? '',
+          peers: m['peers'] as int? ?? 0,
+          held: m['held'] as bool? ?? false,
+          install: m['install'] as String?,
+          path: m['path'] as String?,
+        );
+}
+
+/// This version of Arca and the state of its updates.
+class UpdateView {
+  const UpdateView({
+    this.current = '',
+    this.build = 0,
+    this.mode = 'download',
+    this.checking = false,
+    this.downloading = false,
+    this.staging = false,
+    this.received = 0,
+    this.source,
+    this.error,
+    this.offerGithub = false,
+    this.lastCheck,
+    this.latest,
+    this.serving = 0,
+    this.available,
+  });
+  final String current;
+  final int build;
+
+  /// Automatic updates: 'download', 'notify' or 'off'.
+  final String mode;
+  final bool checking, downloading, staging;
+  final int received;
+
+  /// 'i2p' or 'github', for the download in progress or last made.
+  final String? source;
+  final String? error;
+
+  /// No device on I2P had it: GitHub may be offered, explained.
+  final bool offerGithub;
+
+  /// Milliseconds since the epoch.
+  final int? lastCheck;
+
+  /// The newest release this device holds the announcement of.
+  final String? latest;
+
+  /// Update files this device holds and serves to others.
+  final int serving;
+  final UpdateOffer? available;
+
+  factory UpdateView.fromMap(Map? m) => m == null
+      ? const UpdateView()
+      : UpdateView(
+          current: m['current'] as String? ?? '',
+          build: m['build'] as int? ?? 0,
+          mode: m['mode'] as String? ?? 'download',
+          checking: m['checking'] as bool? ?? false,
+          downloading: m['downloading'] as bool? ?? false,
+          staging: m['staging'] as bool? ?? false,
+          received: m['received'] as int? ?? 0,
+          source: m['source'] as String?,
+          error: m['error'] as String?,
+          offerGithub: m['offerGithub'] as bool? ?? false,
+          lastCheck: m['lastCheck'] as int?,
+          latest: m['latest'] as String?,
+          serving: m['serving'] as int? ?? 0,
+          available: UpdateOffer.fromMap(m['available'] as Map?),
+        );
+}
+
 /// "1,234.5 marcas" from grains, without trailing zeros.
 String formatMarcas(int grains) {
   final whole = grains ~/ 100000000;
@@ -910,6 +1014,7 @@ class CoreState {
     this.liked = const {},
     this.askFolder = false,
     this.noteSpace = 2 * 1024 * 1024 * 1024,
+    this.update = const UpdateView(),
   });
   final List<ProfileView> profiles;
   final String? activeId;
@@ -952,6 +1057,9 @@ class CoreState {
   /// each profile's relay gives other people's notes, in bytes.
   final bool askFolder;
   final int noteSpace;
+
+  /// This version and newer ones (Settings, About; the banner).
+  final UpdateView update;
 
   List<ProposalView> proposalsFor(String collectionId) =>
       proposals.where((p) => p.collectionId == collectionId).toList();
@@ -1112,6 +1220,7 @@ class Core {
       liked: {...(result['liked'] as List? ?? const []).cast<String>()},
       askFolder: result['askFolder'] as bool? ?? false,
       noteSpace: result['noteSpace'] as int? ?? 2 * 1024 * 1024 * 1024,
+      update: UpdateView.fromMap(result['update'] as Map?),
     );
   }
 
@@ -1433,6 +1542,26 @@ class Core {
   });
   Future<String?> chainClaim([String? circle]) =>
       _change('chainClaim', {'circle': ?circle});
+
+  // Updates of Arca
+
+  /// Asks the network for a newer release now.
+  Future<String?> updateCheck() => _change('updateCheck');
+
+  /// Downloads the newer release over I2P, or from GitHub when [github]
+  /// (only on the user's explicit choice).
+  Future<String?> updateDownload({bool github = false}) =>
+      _change('updateDownload', {'github': github});
+  Future<String?> updateStop() => _change('updateStop');
+
+  /// 'download', 'notify' or 'off'.
+  Future<String?> setUpdateMode(String mode) =>
+      _change('updateMode', {'mode': mode});
+
+  /// Installs the downloaded release: returns `{'apk': path}` for the
+  /// system installer, `{'restart': true}` when the app must now exit,
+  /// `{'folder': path}`, or `{'error': ...}`.
+  Future<Map> updateInstall() => _call('updateInstall');
 
   /// SHA-256 and SHA-1 of a file on disk, computed on the core isolate.
   Future<(String, String)?> hashFile(String path) async {

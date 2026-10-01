@@ -8,6 +8,7 @@ import 'core/playback.dart';
 import 'screens/collections_screen.dart';
 import 'screens/search_screen.dart';
 import 'screens/transfers_screen.dart';
+import 'widgets/update.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -163,7 +164,10 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final wide = MediaQuery.sizeOf(context).width >= 840;
-    final body = IndexedStack(index: _index, children: _pages);
+    // A newer version of Arca, when there is one, above everything.
+    final body = UpdateBanner(
+      child: IndexedStack(index: _index, children: _pages),
+    );
 
     if (wide) {
       return Scaffold(
