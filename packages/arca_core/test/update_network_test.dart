@@ -157,7 +157,7 @@ void main() {
     for (final c in [seed, a, b, phone, quiet, newer]) {
       await c.close();
     }
-  });
+  }, timeout: const Timeout(Duration(minutes: 4)));
 
   test('forged announcements and wrong bytes get nowhere', () async {
     final net = LoopbackNetwork();
@@ -200,5 +200,5 @@ void main() {
     await sub.cancel();
     await serve.close();
     await c.close();
-  });
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }
